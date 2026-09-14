@@ -1,0 +1,101 @@
+{% extends "_layout.html" %}
+{% block content %}
+{% set o = order %}
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2>{{ o.order_id }}</h2>
+    <span class="badge {{ 'ok' if o.state in ['done'] else ('danger' if o.state in ['aborted','refused'] else 'warn') }}">{{ o.state }}</span>
+  </div>
+  <p class="muted">Items: {{ o.intent.items | join(', ') }} · Max ₹{{ o.intent.max_total_inr }}</p>
+  {% if o.revision_rounds %}<p class="muted">Revision rounds: {{ o.revision_rounds }} / 5</p>{% endif %}
+</div>
+
+{% if o.state == 'draft' %}
+<div class="card"><p class="muted">Waiting for the worker to search and propose a cart. Run:</p>
+<p class="mono">python -m worker.run {{ o.order_id }}</p></div>
+{% endif %}
+
+{% if o.cart and o.state in ['proposed', 'revising'] %}
+<div class="card">
+  <h3>Proposed cart — {{ o.cart.merchant }} <span class="muted">(v{{ o.cart_version }})</span></h3>
+  <table>
+    <tr><th>Item</th><th>Brand</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr>
+    {% for l in o.cart.line_items %}
+    <tr><td>{{ l.name }}</td><td>{{ l.brand }}</td><td>{{ l.qty }}</td><td>₹{{ '%.2f'|format(l.unit_price_inr) }}</td><td>₹{{ '%.2f'|format(l.line_total_inr) }}</td></tr>
+    {% endfor %}
+  </table>
+  <p>Delivery ₹{{ o.cart.fees.delivery }} · Handling ₹{{ o.cart.fees.handling }} · <b>Landed total ₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</b></p>
+  <p class="mono muted">cart_hash: {{ o.cart.cart_hash }}</p>
+
+  <h4>Revise before approving</h4>
+  <div class="row">
+    <input id="feedback" style="flex:1" placeholder="e.g. Amul not Britannia, make atta 10kg, drop the biscuits">
+    <button onclick="revise()">Send feedback</button>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button class="primary" onclick="approveCart()">Approve cart</button>
+    <button class="danger" onclick="abortOrder()">Abort</button>
+  </div>
+  <p id="status" class="muted"></p>
+</div>
+{% endif %}
+
+{% if o.state == 'approved' %}
+<div class="card">
+  <h3>Ready to pay</h3>
+  <p>Approved cart total: <b>₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</b></p>
+  <p class="muted">Approving payment re-quotes the merchant first — if the price drifted since you approved the cart, this will refuse rather than charge the new amount.</p>
+  <div class="row">
+    <button class="primary" onclick="approvePayment()">Approve payment</button>
+    <button class="danger" onclick="abortOrder()">Abort</button>
+  </div>
+  <p id="status" class="muted"></p>
+</div>
+{% endif %}
+
+{% if o.state == 'done' %}
+<div class="card"><h3>✅ Ordered</h3><p>Merchant order: {{ o.merchant_order_id }} · Paid ₹{{ '%.2f'|format(o.payment.amount_inr) }} via {{ o.payment.rail }}</p></div>
+{% endif %}
+{% if o.state in ['aborted', 'refused'] %}
+<div class="card"><h3>⛔ {{ o.state }}</h3></div>
+{% endif %}
+
+<div class="card">
+  <h3>Reasoning trace</h3>
+  {% for span in trace %}
+  <div class="trace-span">
+    <b>{{ span.actor }}</b> — {{ span.action }} <span class="muted">({{ span.confidence }})</span>
+    <p>{{ span.reasoning }}</p>
+    {% if span.alternatives_rejected %}
+    <p class="muted">Rejected: {% for a in span.alternatives_rejected %}{{ a.sku or a.name or a }} ({{ a.why }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    {% if span.mandate_ref %}<p class="mono muted">mandate_ref: {{ span.mandate_ref }}</p>{% endif %}
+  </div>
+  {% else %}
+  <p class="muted">No spans yet.</p>
+  {% endfor %}
+</div>
+
+<script>
+const orderId = "{{ o.order_id }}";
+async function revise() {
+  const r = await fetch(`/console/order/${orderId}/revise`, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({instruction_text: document.getElementById('feedback').value})});
+  const data = await r.json();
+  document.getElementById('status').textContent = r.ok ? 'Feedback recorded — waiting for the worker to re-propose.' : ('Refused: ' + (data.detail || JSON.stringify(data)));
+  if (r.ok) setTimeout(()=>location.reload(), 1000);
+}
+async function approveCart() {
+  const r = await fetch(`/console/order/${orderId}/approve_cart`, {method:'POST'});
+  if (r.ok) location.reload(); else document.getElementById('status').textContent = 'Refused: ' + JSON.stringify(await r.json());
+}
+async function approvePayment() {
+  const r = await fetch(`/console/order/${orderId}/approve_payment`, {method:'POST'});
+  if (r.ok) location.reload(); else document.getElementById('status').textContent = 'Refused: ' + JSON.stringify(await r.json());
+}
+async function abortOrder() {
+  const r = await fetch(`/console/order/${orderId}/abort`, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'reason=user+aborted'});
+  if (r.ok) location.reload();
+}
+</script>
+{% endblock %}

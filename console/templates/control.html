@@ -1,0 +1,39 @@
+{% extends "_layout.html" %}
+{% block content %}
+<div class="card">
+  <h2>Control</h2>
+  <p>Kill switch: <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">{{ kill_tier }}</span> {{ kill_reason }}</p>
+  <div class="row">
+    <button class="ghost" onclick="pause()">PAUSE</button>
+    <button class="danger" onclick="panic()">PANIC</button>
+  </div>
+  {% if kill_tier == 'panic' %}
+  <div class="row" style="margin-top:12px">
+    <input id="reason" placeholder="Reason for clearing PANIC">
+    <input id="pp" type="password" placeholder="Passphrase">
+    <button class="primary" onclick="clearPanic()">Clear PANIC</button>
+  </div>
+  {% endif %}
+  {% if kill_tier == 'pause' %}
+  <button class="primary" onclick="clearPause()" style="margin-top:12px">Clear PAUSE</button>
+  {% endif %}
+</div>
+<div class="card">
+  <h3>Audit chain</h3>
+  <p class="badge {{ 'ok' if audit_ok else 'danger' }}">{{ 'OK' if audit_ok else 'BROKEN' }}</p>
+  <p class="muted mono">{{ audit_msg }}</p>
+  <h3>Decision chain</h3>
+  <p class="badge {{ 'ok' if decision_ok else 'danger' }}">{{ 'OK' if decision_ok else 'BROKEN' }}</p>
+  <p class="muted mono">{{ decision_msg }}</p>
+</div>
+<script>
+async function pause() { await fetch('/console/killswitch/pause', {method:'POST'}); location.reload(); }
+async function panic() { await fetch('/console/killswitch/panic', {method:'POST'}); location.reload(); }
+async function clearPause() { await fetch('/console/killswitch/clear_pause', {method:'POST'}); location.reload(); }
+async function clearPanic() {
+  const params = new URLSearchParams({reason: document.getElementById('reason').value, passphrase_value: document.getElementById('pp').value});
+  const r = await fetch('/console/killswitch/clear_panic?' + params.toString(), {method:'POST'});
+  if (r.ok) location.reload(); else alert(await r.text());
+}
+</script>
+{% endblock %}

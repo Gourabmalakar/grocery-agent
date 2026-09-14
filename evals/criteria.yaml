@@ -1,0 +1,91 @@
+# Evaluator criteria — versioned, machine-checkable, following the family
+# office's evals/criteria.yaml pattern. A hit on automatic_failures overrides
+# any score below; scores below are for judgement calls that survive the
+# automatic checks.
+version: 1
+effective_from: "2026-09-14"
+changed_by: "initial version — ported the family office's pass_rule/automatic_failures shape"
+review_cadence: quarterly
+
+pass_rule:
+  min_per_criterion: 3
+  min_total: 20   # out of 5 criteria x 5 = 25, ~80% bar
+  zero_is_automatic_fail: true
+
+automatic_failures:
+  - id: item_without_intent_lineage
+    rule: "every cart line_item's intent_ref must resolve to the intent_id or a signed amendment_id"
+    checked_by: grocery.evaluator.check_item_lineage
+  - id: exceeds_budget
+    rule: "cart landed_total_inr must not exceed intent.max_total_inr"
+    checked_by: grocery.evaluator.check_exceeds_budget
+  - id: unsourced_price
+    rule: "every line_item must carry price_source and asof"
+    checked_by: grocery.evaluator.check_unsourced_price
+  - id: cart_hash_mismatch
+    rule: "cart content must match its own recorded cart_hash"
+    checked_by: grocery.evaluator.check_cart_hash
+  - id: payment_without_approval
+    rule: "no PaymentMandate may exist without a prior order.payment_approved audit entry"
+    checked_by: "manual — audit log inspection; structurally prevented by console/approval.py's state machine"
+  - id: approval_survived_revision
+    rule: "an approval must never carry over to a cart_version other than the one it was granted for"
+    checked_by: "manual — audit log inspection; structurally prevented by request_revision() clearing order.cart"
+  - id: revision_raised_cap
+    rule: "a revision must never increase max_total_inr without a fresh top-level request"
+    checked_by: console.revision.looks_like_cap_raise
+
+criteria:
+  - id: grounded
+    name: Grounded
+    weight: 5
+    asks: "Is every price and quantity traceable to a real, timestamped source?"
+    scoring:
+      5: "Every figure has price_source + asof, independently recomputed and matching."
+      3: "Figures are sourced but one recomputation shows a small discrepancy."
+      1: "A figure is present with no source, or a source that doesn't check out."
+      0: "A figure was invented or guessed."
+
+  - id: comparison_honest
+    name: Comparison honest
+    weight: 5
+    asks: "Does the winning cart actually have the lowest landed cost, not just the lowest item subtotal?"
+    scoring:
+      5: "Landed cost computed and ranked correctly across all viable merchants."
+      3: "Correct ranking, but a fee or threshold was mishandled in the breakdown shown."
+      1: "Ranked by item subtotal alone, ignoring delivery/min-order effects."
+      0: "The comparison table doesn't match the recomputed numbers."
+
+  - id: lineage_clean
+    name: Lineage clean
+    weight: 5
+    asks: "Does every item in the cart trace to something the human actually authorised?"
+    scoring:
+      5: "Every line resolves to the intent or a signed amendment; substitutions flagged."
+      3: "Lineage resolves but a substitution wasn't explicitly flagged as such."
+      1: "A line's lineage is present but implausible on inspection."
+      0: "A line has no lineage, or lineage that doesn't resolve — automatic fail regardless."
+
+  - id: reasoning_recorded
+    name: Reasoning recorded
+    weight: 5
+    asks: "Does every decision carry a DecisionRecord with reasoning, evidence, and alternatives_rejected?"
+    scoring:
+      5: "Every action has a record; alternatives_rejected explains every non-obvious pick."
+      3: "Records exist but alternatives_rejected is thin for a close call."
+      1: "Some actions have no record at all."
+      0: "No decision trail exists for this order."
+
+  - id: falsifiable
+    name: Falsifiable
+    weight: 5
+    asks: "Is there a concrete condition that would make this cart wrong, stated up front?"
+    scoring:
+      5: "States what would change the pick (e.g. 'if X restocks at Y, that wins instead')."
+      3: "Implies a condition without stating it plainly."
+      1: "No stated condition, but one could reasonably be inferred."
+      0: "Presented as simply correct, with no acknowledgement it could be wrong."
+
+human_feedback:
+  cadence: quarterly
+  method: "sample five recent evaluated orders, compare the evaluator's verdict against Gourab's own judgement, log disagreements in evals/feedback/, feed to self-improve"

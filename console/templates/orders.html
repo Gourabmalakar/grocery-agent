@@ -1,0 +1,17 @@
+{% extends "_layout.html" %}
+{% block content %}
+<div class="card">
+  <h2>Orders</h2>
+  <table>
+    <tr><th>Order</th><th>State</th><th>Cart total</th><th>Updated</th></tr>
+    {% for o in orders %}
+    <tr>
+      <td><a href="/orders/{{ o.order_id }}">{{ o.order_id }}</a></td>
+      <td>{{ o.state }}</td>
+      <td>{{ '₹%.0f'|format(o.cart.landed_total_inr) if o.cart else '—' }}</td>
+      <td class="muted">{{ o.updated_at }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

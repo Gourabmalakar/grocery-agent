@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./data/keys/**)",
+      "Read(./data/vault/**)",
+      "Bash(curl:*://*/order*)",
+      "Bash(curl:*://*/pay*)",
+      "Bash(cat ./data/keys/*)",
+      "Bash(cat ./.env)",
+      "Bash(rm ./data/audit/**)",
+      "Bash(rm ./data/mandates/issued/**)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_start.sh" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/budget_context.sh" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash",
+        "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_money_path.sh" } ] },
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_immutable.sh" } ] },
+      { "matcher": "mcp__Claude_Browser__navigate|mcp__Claude_Browser__computer|mcp__Claude_Browser__form_input",
+        "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_checkout_nav.sh" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "mcp__Claude_Browser__navigate",
+        "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/audit_browser.sh" } ] }
+    ],
+    "PreCompact": [
+      { "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/compact_session.py" },
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_end.sh" }
+      ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/compact_session.py" },
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_end.sh" }
+      ] }
+    ]
+  }
+}

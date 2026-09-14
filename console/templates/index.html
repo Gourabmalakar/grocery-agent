@@ -1,0 +1,26 @@
+{% extends "_layout.html" %}
+{% block content %}
+<div class="card">
+  {% if first_run %}
+  <h2>Set up the Console</h2>
+  <p class="muted">This passphrase gates payment approval and clearing PANIC. Nothing else needs it — you'll type your budget and shopping list once you're in.</p>
+  <input id="pp" type="password" placeholder="Choose a passphrase (8+ chars)">
+  <button class="primary" onclick="setup()">Set passphrase</button>
+  {% else %}
+  <h2>Unlock the Console</h2>
+  <input id="pp" type="password" placeholder="Passphrase">
+  <button class="primary" onclick="login()">Unlock</button>
+  {% endif %}
+  <p id="err" class="muted" style="color:var(--danger)"></p>
+</div>
+<script>
+async function setup() {
+  const r = await fetch('/auth/setup', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'passphrase_value='+encodeURIComponent(document.getElementById('pp').value)});
+  if (r.ok) location.href = '/ask'; else document.getElementById('err').textContent = (await r.json()).detail;
+}
+async function login() {
+  const r = await fetch('/auth/login', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'passphrase_value='+encodeURIComponent(document.getElementById('pp').value)});
+  if (r.ok) location.href = '/ask'; else document.getElementById('err').textContent = (await r.json()).detail;
+}
+</script>
+{% endblock %}

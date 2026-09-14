@@ -1,0 +1,31 @@
+{% extends "_layout.html" %}
+{% block content %}
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <span class="badge {{ 'warn' if mode != 'live' else 'danger' }}">mode: {{ mode }}</span>
+    <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">kill switch: {{ kill_tier }}</span>
+  </div>
+  <p class="muted">Remaining today ₹{{ '%.0f'|format(remaining_today) }} · remaining this month ₹{{ '%.0f'|format(remaining_month) }}</p>
+</div>
+<div class="card">
+  <h2>What do you want to buy?</h2>
+  <textarea id="items" rows="3" style="width:100%" placeholder="e.g. milk, eggs, atta 5kg, biscuits"></textarea>
+  <div class="row" style="margin-top:8px">
+    <input id="max_total" type="number" placeholder="Max total ₹" value="800">
+    <button class="primary" onclick="submitAsk()">Start shopping</button>
+  </div>
+  <p id="status" class="muted"></p>
+</div>
+<script>
+async function submitAsk() {
+  const items = document.getElementById('items').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const max_total_inr = parseInt(document.getElementById('max_total').value || '0', 10);
+  const r = await fetch('/api/intent', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({items, max_total_inr})});
+  if (!r.ok) { document.getElementById('status').textContent = 'Failed: ' + (await r.text()); return; }
+  const data = await r.json();
+  document.getElementById('status').textContent = 'Order ' + data.order_id + ' created. Start the worker against it: python -m worker.run ' + data.order_id;
+  location.href = '/orders/' + data.order_id;
+}
+</script>
+{% endblock %}
