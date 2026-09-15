@@ -69,7 +69,7 @@ def test_revision_then_approve(live):
     hints = worker_run._interpret_revision("Amul not Britannia")
     worker_run._plan_and_propose(
         order_id, ["biscuits"], 800,
-        forced_brand=hints["forced_brand"].get("_any_"),
+        brand_swap=hints["brand_swap"],
         cart_version=order["cart_version"] + 1,
         amendment_ids=[a["amendment_id"] for a in order["amendments"]],
     )
@@ -82,3 +82,43 @@ def test_revision_then_approve(live):
 
     r = client.post(f"/console/order/{order_id}/approve_cart")
     assert r.status_code == 200, r.text
+
+
+def test_brand_swap_scoped_to_affected_item_only(live):
+    """Regression test for a real bug caught by hand in the browser: a brand
+    swap meant for one item category ("Amul not Britannia", about biscuits)
+    must not silently drop every other item whose brand also isn't Amul
+    (Mother Dairy milk, generic eggs, Aashirvaad/Fortune atta). Before the
+    fix, _plan_and_propose applied forced_brand as a blanket filter and the
+    revised cart lost three of four items without any error — a textbook
+    case of the over-interpretation cart-reviser's skill file warns against."""
+    client = _login(live["console"])
+    r = client.post("/api/intent", json={"items": ["milk", "eggs", "atta 5kg", "biscuits"], "max_total_inr": 800})
+    order_id = r.json()["order_id"]
+
+    import worker.run as worker_run
+    worker_run._plan_and_propose(order_id, ["milk", "eggs", "atta 5kg", "biscuits"], 800)
+    order = client.get(f"/api/order/{order_id}").json()
+    assert len(order["cart"]["line_items"]) == 4  # all four items present before any revision
+
+    client.post(f"/console/order/{order_id}/revise", json={"instruction_text": "Amul not Britannia"})
+    order = client.get(f"/api/order/{order_id}").json()
+    hints = worker_run._interpret_revision("Amul not Britannia")
+    worker_run._plan_and_propose(
+        order_id, ["milk", "eggs", "atta 5kg", "biscuits"], 800,
+        brand_swap=hints["brand_swap"],
+        cart_version=order["cart_version"] + 1,
+        amendment_ids=[a["amendment_id"] for a in order["amendments"]],
+    )
+
+    order = client.get(f"/api/order/{order_id}").json()
+    assert order["state"] == "proposed"
+    skus = {li["sku"] for li in order["cart"]["line_items"]}
+    # All four items must still be present — the brand swap should have
+    # touched only the biscuit line, not caused milk/eggs/atta to vanish.
+    assert len(order["cart"]["line_items"]) == 4, (
+        f"brand swap dropped items outside its scope — only {len(order['cart']['line_items'])} "
+        f"of 4 items remain: {skus}"
+    )
+    biscuit_line = next(li for li in order["cart"]["line_items"] if "cookie" in li["name"].lower())
+    assert biscuit_line["brand"].lower() == "amul"

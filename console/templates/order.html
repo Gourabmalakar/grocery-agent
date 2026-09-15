@@ -6,7 +6,7 @@
     <h2>{{ o.order_id }}</h2>
     <span class="badge {{ 'ok' if o.state in ['done'] else ('danger' if o.state in ['aborted','refused'] else 'warn') }}">{{ o.state }}</span>
   </div>
-  <p class="muted">Items: {{ o.intent.items | join(', ') }} · Max ₹{{ o.intent.max_total_inr }}</p>
+  <p class="muted">Items: {{ o.intent['items'] | join(', ') }} · Max ₹{{ o.intent.max_total_inr }}</p>
   {% if o.revision_rounds %}<p class="muted">Revision rounds: {{ o.revision_rounds }} / 5</p>{% endif %}
 </div>
 

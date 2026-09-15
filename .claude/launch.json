@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "console",
+      "runtimeExecutable": "./.venv/bin/python",
+      "runtimeArgs": ["-m", "console.app"],
+      "port": 8800
+    },
+    {
+      "name": "mockstore",
+      "runtimeExecutable": "./.venv/bin/python",
+      "runtimeArgs": ["-m", "mockstore.app"],
+      "port": 8801
+    }
+  ]
+}

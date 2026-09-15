@@ -69,12 +69,21 @@ def _pick_best_listing(item_keys: list[str], merchant: str, *, forced_brand: str
 
 def _interpret_revision(instruction_text: str) -> dict:
     """Deterministic pattern match for Phase 0. Returns a dict of hints:
-    {drop: [terms], forced_brand: {query_term: brand}}. Anything it can't
-    parse is left alone rather than guessed at — a revision worker's job is
-    to narrow, never to improvise. A real cart-reviser step would replace
-    this with an LLM call constrained to the same output shape."""
+    {drop: [terms], brand_swap: {to: brand, away_from: brand} | None}.
+    Anything it can't parse is left alone rather than guessed at — a
+    revision worker's job is to narrow, never to improvise. A real
+    cart-reviser step would replace this with an LLM call constrained to
+    the same output shape.
+
+    brand_swap deliberately carries BOTH brands, not just the requested one:
+    "Amul not Britannia" must swap only the item category where Britannia is
+    actually a candidate (biscuits) — applying "prefer Amul" as a blanket
+    filter across every item would silently drop milk/eggs/atta at any
+    merchant whose brand for those isn't Amul, which is exactly the
+    over-interpretation cart-reviser's skill file warns against. See
+    _plan_and_propose's scoping of brand_swap to affected queries only."""
     t = instruction_text.lower()
-    hints = {"drop": [], "forced_brand": {}}
+    hints = {"drop": [], "brand_swap": None}
 
     m = re.search(r"\b(drop|remove|no)\s+(?:the\s+)?(\w+)", t)
     if m:
@@ -82,13 +91,13 @@ def _interpret_revision(instruction_text: str) -> dict:
 
     m = re.search(r"\b(\w+)\s+not\s+(\w+)", t)  # "Amul not Britannia"
     if m:
-        hints["forced_brand"]["_any_"] = m.group(1)
+        hints["brand_swap"] = {"to": m.group(1), "away_from": m.group(2)}
 
     return hints
 
 
 def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
-                       forced_brand: str | None = None, drop_terms: list[str] | None = None,
+                       brand_swap: dict | None = None, drop_terms: list[str] | None = None,
                        cart_version: int = 1, amendment_ids: list[str] | None = None):
     drop_terms = drop_terms or []
     active_items = [
@@ -110,13 +119,31 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
                 reasoning=f"no catalogue match for '{query}'", confidence="high",
             )
             continue
+
+        # Scope brand_swap to only the queries where the brand being swapped
+        # AWAY FROM is actually a candidate somewhere — "Amul not Britannia"
+        # must affect biscuits (where Britannia is an option) and nothing
+        # else, never every item in the order. Applying "prefer Amul"
+        # globally would silently drop milk/eggs/atta wherever their brand
+        # isn't Amul, which is the over-interpretation cart-reviser's skill
+        # file exists to prevent (see _interpret_revision's docstring).
+        query_forced_brand = None
+        if brand_swap:
+            away = brand_swap["away_from"].lower()
+            brands_here = {
+                CATALOG[k]["listings"][m]["brand"].lower()
+                for k in item_keys for m in CATALOG[k]["listings"]
+            }
+            if away in brands_here:
+                query_forced_brand = brand_swap["to"]
+
         for merchant in meta:
-            best_key, listing, rejected = _pick_best_listing(item_keys, merchant, forced_brand=forced_brand)
+            best_key, listing, rejected = _pick_best_listing(item_keys, merchant, forced_brand=query_forced_brand)
             if not listing:
                 tools.record_decision(
                     trace_id=order_id, actor="price-scout", action="item_unavailable",
                     reasoning=f"'{query}' has no in-stock listing at {merchant}"
-                              + (f" matching forced brand '{forced_brand}'" if forced_brand else ""),
+                              + (f" matching forced brand '{query_forced_brand}'" if query_forced_brand else ""),
                     confidence="high",
                 )
                 continue
@@ -235,7 +262,7 @@ def main(order_id: str):
                 print(f"[worker] re-planning after revision: {latest['instruction_text']!r} -> {hints}")
                 _plan_and_propose(
                     order_id, items, max_total,
-                    forced_brand=hints["forced_brand"].get("_any_"),
+                    brand_swap=hints["brand_swap"],
                     drop_terms=hints["drop"],
                     cart_version=order["cart_version"] + 1,
                     amendment_ids=[a["amendment_id"] for a in amendments],
