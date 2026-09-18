@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -23,6 +24,7 @@ from grocery.audit import log as audit_log
 from grocery.audit import decisions as decision_log
 from grocery.audit import verify as audit_verify
 from grocery.ledger import budget, store as ledger_store
+from grocery.sentinel import report as sentinel_report
 from grocery.mandates import intent as intent_mandate
 from grocery.mandates import cart as cart_mandate
 from console import approval, revision
@@ -32,6 +34,13 @@ from grocery.adapters.mock import MockAdapter
 
 app = FastAPI(title="grocery-console", docs_url=None, redoc_url=None, openapi_url=None)
 templates = Jinja2Templates(directory=str(config.ROOT / "console" / "templates"))
+
+# NB: this mount was missing entirely through Phase 0 — every page linked
+# `/static/style.css` but nothing ever served it, so the console rendered
+# completely unstyled (a 404, silently swallowed by the <link> tag) from
+# the very first commit. Found while visually verifying the redesigned UI;
+# see tests/e2e/test_pages_render.py's new assertion that this now 200s.
+app.mount("/static", StaticFiles(directory=str(config.ROOT / "console" / "static")), name="static")
 
 SESSION_COOKIE = "grocery_console_session"
 
@@ -94,6 +103,7 @@ def ask_page(request: Request):
     _require_session(request)
     ks = killswitch.state()
     return templates.TemplateResponse(request, "ask.html", {
+        "active_nav": "ask",
         "mode": config.MODE,
         "kill_tier": ks.tier.value,
         "remaining_today": config.CAP_PER_DAY_INR - ledger_store.spend_today(),
@@ -109,6 +119,7 @@ def order_page(request: Request, order_id: str):
     order_json = order.to_json()
     assistant_message = narrator.narrate_for_order(order_json)
     return templates.TemplateResponse(request, "order.html", {
+        "active_nav": "orders",
         "order": order_json, "trace": trace, "assistant_message": assistant_message,
     })
 
@@ -117,7 +128,7 @@ def order_page(request: Request, order_id: str):
 def orders_page(request: Request):
     _require_session(request)
     orders = [o.to_json() for o in approval.list_orders()]
-    return templates.TemplateResponse(request, "orders.html", {"orders": orders})
+    return templates.TemplateResponse(request, "orders.html", {"active_nav": "orders", "orders": orders})
 
 
 @app.get("/control", response_class=HTMLResponse)
@@ -126,24 +137,55 @@ def control_page(request: Request):
     ks = killswitch.state()
     a_ok, a_msg = audit_verify.verify_audit_chain()
     d_ok, d_msg = audit_verify.verify_decision_chain()
+    last_sweep = sentinel_report.last_sweep()
     return templates.TemplateResponse(request, "control.html", {
+        "active_nav": "control",
+        "mode": config.MODE,
         "kill_tier": ks.tier.value, "kill_reason": ks.reason,
         "audit_ok": a_ok, "audit_msg": a_msg, "decision_ok": d_ok, "decision_msg": d_msg,
+        "last_sweep": last_sweep,
+        "dead_mans_switch_tripped": sentinel_report.dead_mans_switch_tripped(),
+        "spend_today": ledger_store.spend_today(), "cap_today": config.CAP_PER_DAY_INR,
+        "spend_month": ledger_store.spend_this_month(), "cap_month": config.CAP_PER_MONTH_INR,
     })
+
+
+@app.post("/console/sentinel/sweep")
+def console_sentinel_sweep(request: Request):
+    """Manual trigger for a transaction-sentinel sweep — until Phase 1's
+    scheduler runs this on a cadence (see the plan's heartbeat section), a
+    human can ask for one from the Control page. Read-only from the
+    console's point of view: it can only ever report findings or, on a
+    fatal one, trip PANIC — the same authority the sentinel always has."""
+    _require_session(request)
+    return sentinel_report.sweep()
 
 
 # --------------------------------------------------------------- health ----
 
 @app.get("/health")
 def health():
+    """Following the family office's rule that a degraded backend must be
+    visible rather than silently tolerated: mode, kill-switch state, both
+    chains, budget, pending orders, and the sentinel's own freshness — a
+    dead-man's-switch trip here means the sentinel itself has gone quiet,
+    which per the plan is the failure this system is least allowed to have."""
     ks = killswitch.state()
     a_ok, _ = audit_verify.verify_audit_chain()
     d_ok, _ = audit_verify.verify_decision_chain()
+    last_sweep = sentinel_report.last_sweep()
+    dead_mans_switch = sentinel_report.dead_mans_switch_tripped()
+    ok = a_ok and d_ok and ks.tier.value != "panic" and not dead_mans_switch
     return {
-        "ok": True, "mode": config.MODE, "kill_switch": ks.tier.value,
+        "ok": ok, "mode": config.MODE, "kill_switch": ks.tier.value,
         "audit_chain_ok": a_ok, "decision_chain_ok": d_ok,
         "spend_today_inr": ledger_store.spend_today(), "spend_month_inr": ledger_store.spend_this_month(),
         "pending_orders": [o.order_id for o in approval.list_orders() if o.state.value in ("draft", "proposed", "revising", "approved", "executing")],
+        "sentinel": {
+            "last_swept_at": last_sweep["swept_at"] if last_sweep else None,
+            "last_sweep_findings": last_sweep["by_severity"] if last_sweep else None,
+            "dead_mans_switch_tripped": dead_mans_switch,
+        },
     }
 
 

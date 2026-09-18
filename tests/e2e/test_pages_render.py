@@ -29,6 +29,14 @@ def test_all_pages_render_across_order_states(live):
         r = client.get(path)
         assert r.status_code == 200, f"{path}: {r.status_code} {r.text[:300]}"
 
+    # Regression: console/app.py had no StaticFiles mount at all through
+    # Phase 0 — every template linked /static/style.css but nothing served
+    # it, so every page 404'd on its own stylesheet and rendered completely
+    # unstyled. Found by hand while visually verifying the UI redesign.
+    r = client.get("/static/style.css")
+    assert r.status_code == 200, "the console's own stylesheet must actually be served"
+    assert "text/css" in r.headers.get("content-type", "")
+
     r = client.post("/api/intent", json={"items": ["milk"], "max_total_inr": 800})
     order_id = r.json()["order_id"]
 
@@ -56,7 +64,7 @@ def test_all_pages_render_across_order_states(live):
     r = client.get(f"/orders/{order_id}")
     assert r.status_code == 200, r.text
     assert "done" in r.text
-    assert "Ordered" in r.text
+    assert "Order placed" in r.text  # copy from the redesigned done-state card
 
     # orders list must render with at least one row now
     r = client.get("/orders")

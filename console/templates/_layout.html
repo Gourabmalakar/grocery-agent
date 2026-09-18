@@ -2,11 +2,58 @@
 <html>
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grocery Console</title>
+  <title>{% block title %}Grocery Butler{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <nav class="row"><a href="/ask">Ask</a><a href="/orders">Orders</a><a href="/control">Control</a></nav>
-  {% block content %}{% endblock %}
+  {% block nav %}
+  <div class="topnav">
+    <div class="topnav-inner">
+      <a href="/ask" class="brand"><span class="brand-mark">🛒</span> Grocery Butler</a>
+      <div class="navlinks">
+        <a href="/ask" class="{{ 'active' if active_nav == 'ask' }}">Ask</a>
+        <a href="/orders" class="{{ 'active' if active_nav == 'orders' }}">Orders</a>
+        <a href="/control" class="{{ 'active' if active_nav == 'control' }}">Control</a>
+      </div>
+    </div>
+  </div>
+  {% endblock %}
+  <main class="wrap" style="padding-top: 20px;">
+    {% block content %}{% endblock %}
+  </main>
+  <div id="toast-stack"></div>
+  <script>
+    // Shared helpers used by every page's inline script — one small,
+    // dependency-free layer instead of a JS framework, on purpose: this
+    // console is a handful of screens, and every extra moving part here is
+    // one more thing between a human and an approval they need to trust.
+    function toast(message, kind) {
+      const el = document.createElement('div');
+      el.className = 'toast' + (kind ? ' ' + kind : '');
+      el.textContent = message;
+      document.getElementById('toast-stack').appendChild(el);
+      setTimeout(() => el.remove(), 4200);
+    }
+
+    async function withLoading(btn, label, fn) {
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spin"></span>' + label;
+      try {
+        await fn();
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
+    }
+
+    function friendlyError(detail) {
+      if (!detail) return 'Something went wrong — please try again.';
+      if (typeof detail === 'string') return detail;
+      if (detail.detail) return detail.detail;
+      return JSON.stringify(detail);
+    }
+  </script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

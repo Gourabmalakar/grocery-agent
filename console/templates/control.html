@@ -1,39 +1,96 @@
 {% extends "_layout.html" %}
 {% block content %}
-<div class="card">
-  <h2>Control</h2>
-  <p>Kill switch: <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">{{ kill_tier }}</span> {{ kill_reason }}</p>
+<h1 style="font-size:1.3em">Control</h1>
+
+<div class="card elevated">
+  <div class="row between">
+    <h3 style="margin:0">Emergency stop</h3>
+    <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">
+      {{ 'Running normally' if kill_tier == 'none' else kill_tier.upper() }}
+    </span>
+  </div>
+  {% if kill_reason %}<p class="muted mono">{{ kill_reason }}</p>{% endif %}
+  <p class="muted">PAUSE stops new work but lets anything already in flight finish read-only. PANIC refuses everything — propose, approve, execute — immediately, and stays refused until you clear it with your passphrase.</p>
   <div class="row">
-    <button class="ghost" onclick="pause()">PAUSE</button>
-    <button class="danger" onclick="panic()">PANIC</button>
+    <button class="ghost" onclick="pause()">⏸ PAUSE</button>
+    <button class="danger" onclick="panic()">🛑 PANIC — stop everything now</button>
   </div>
   {% if kill_tier == 'panic' %}
-  <div class="row" style="margin-top:12px">
-    <input id="reason" placeholder="Reason for clearing PANIC">
+  <div class="stack spacer-top">
+    <input id="reason" placeholder="Why are you clearing PANIC?">
     <input id="pp" type="password" placeholder="Passphrase">
     <button class="primary" onclick="clearPanic()">Clear PANIC</button>
   </div>
   {% endif %}
   {% if kill_tier == 'pause' %}
-  <button class="primary" onclick="clearPause()" style="margin-top:12px">Clear PAUSE</button>
+  <button class="primary spacer-top" onclick="clearPause()">Clear PAUSE</button>
   {% endif %}
 </div>
+
 <div class="card">
-  <h3>Audit chain</h3>
-  <p class="badge {{ 'ok' if audit_ok else 'danger' }}">{{ 'OK' if audit_ok else 'BROKEN' }}</p>
+  <h3>Budget</h3>
+  <p class="muted" style="margin:0">Today <b>₹{{ '%.0f'|format(spend_today) }}</b> of ₹{{ cap_today }} · This month <b>₹{{ '%.0f'|format(spend_month) }}</b> of ₹{{ cap_month }}</p>
+  <p class="muted" style="margin:4px 0 0">Mode: <span class="badge {{ 'warn' if mode != 'live' else 'danger' }}">{{ 'test — no real orders' if mode != 'live' else 'LIVE' }}</span></p>
+</div>
+
+<div class="card">
+  <div class="row between">
+    <h3 style="margin:0">Independent oversight</h3>
+    <button class="small" id="sweep-btn" onclick="runSweep()">Run a check now</button>
+  </div>
+  <p class="muted">transaction-sentinel cross-checks the ledger, both hash chains, stuck orders and behavioural drift — independently of everything else in this app. On anything fatal, it trips PANIC itself.</p>
+  <div class="stack" id="sweep-result">
+    {% if last_sweep %}
+    <p class="muted" style="margin:0">Last check: <span class="mono">{{ last_sweep.findings_count }} finding(s)</span>, {{ (last_sweep.by_severity.fatal or 0) }} fatal, {{ (last_sweep.by_severity.critical or 0) }} critical</p>
+    {% else %}
+    <p class="muted" style="margin:0">No sweep has run yet in this environment.</p>
+    {% endif %}
+  </div>
+  <p class="badge {{ 'danger' if dead_mans_switch_tripped else 'ok' }} spacer-top">{{ 'No recent sweep — dead-man\'s switch tripped' if dead_mans_switch_tripped else 'Reporting on schedule' }}</p>
+</div>
+
+<div class="card">
+  <h3>Tamper-evidence</h3>
+  <div class="row between">
+    <span>Audit log (facts)</span>
+    <span class="badge {{ 'ok' if audit_ok else 'danger' }}">{{ 'intact' if audit_ok else 'BROKEN' }}</span>
+  </div>
   <p class="muted mono">{{ audit_msg }}</p>
-  <h3>Decision chain</h3>
-  <p class="badge {{ 'ok' if decision_ok else 'danger' }}">{{ 'OK' if decision_ok else 'BROKEN' }}</p>
+  <div class="row between">
+    <span>Decision log (reasoning)</span>
+    <span class="badge {{ 'ok' if decision_ok else 'danger' }}">{{ 'intact' if decision_ok else 'BROKEN' }}</span>
+  </div>
   <p class="muted mono">{{ decision_msg }}</p>
 </div>
+
+<div class="card">
+  <h3>How payment actually works</h3>
+  <p class="muted">No card number, UPI PIN or bank login is ever stored by this app. Your passphrase gates payment approval and clearing PANIC, and it never leaves this machine. Every order needs two separate approvals from you — one for the cart, one for the payment — and the price is re-checked right before paying so nothing can drift after you approved it.</p>
+</div>
+
 <script>
-async function pause() { await fetch('/console/killswitch/pause', {method:'POST'}); location.reload(); }
-async function panic() { await fetch('/console/killswitch/panic', {method:'POST'}); location.reload(); }
+async function pause() { await fetch('/console/killswitch/pause', {method:'POST'}); toast('Paused'); setTimeout(()=>location.reload(), 400); }
+async function panic() {
+  if (!confirm('This stops everything immediately, including any order in progress. Continue?')) return;
+  await fetch('/console/killswitch/panic', {method:'POST'}); toast('PANIC engaged', 'danger'); setTimeout(()=>location.reload(), 400);
+}
 async function clearPause() { await fetch('/console/killswitch/clear_pause', {method:'POST'}); location.reload(); }
 async function clearPanic() {
   const params = new URLSearchParams({reason: document.getElementById('reason').value, passphrase_value: document.getElementById('pp').value});
   const r = await fetch('/console/killswitch/clear_panic?' + params.toString(), {method:'POST'});
-  if (r.ok) location.reload(); else alert(await r.text());
+  if (r.ok) location.reload(); else toast(friendlyError(await r.json().catch(()=>({}))), 'danger');
+}
+async function runSweep() {
+  const btn = document.getElementById('sweep-btn');
+  await withLoading(btn, ' Checking…', async () => {
+    const r = await fetch('/console/sentinel/sweep', {method:'POST'});
+    const data = await r.json();
+    document.getElementById('sweep-result').innerHTML =
+      `<p class="muted" style="margin:0">Just now: <b>${data.findings_count}</b> finding(s)` +
+      (data.findings_count ? ` — ${data.findings.map(f => f.severity).join(', ')}` : ' — all clear') + `</p>`;
+    toast(data.tripped_panic ? 'Fatal finding — PANIC engaged' : 'Check complete', data.tripped_panic ? 'danger' : 'ok');
+    if (data.tripped_panic) setTimeout(() => location.reload(), 800);
+  });
 }
 </script>
 {% endblock %}

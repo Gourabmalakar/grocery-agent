@@ -189,6 +189,13 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
                     trace_id=order_id, actor="price-scout", action="item_unavailable",
                     reasoning=f"'{query}' has no in-stock listing at {merchant}"
                               + (f" matching forced brand '{query_forced_brand}'" if query_forced_brand else ""),
+                    # Recording which merchant this miss was at (not just in
+                    # the free-text reasoning) is what lets
+                    # grocery.sentinel.checks.check_adapter_health tell a
+                    # merchant with a genuinely thin catalogue apart from one
+                    # whose adapter has quietly broken — CLAUDE.md rule 4
+                    # again: reasoning without evidence isn't enough to act on.
+                    evidence=[{"source": merchant}],
                     confidence="high",
                 )
                 continue

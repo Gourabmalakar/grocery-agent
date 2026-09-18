@@ -1,17 +1,40 @@
 {% extends "_layout.html" %}
 {% block content %}
-<div class="card">
-  <h2>Orders</h2>
-  <table>
-    <tr><th>Order</th><th>State</th><th>Cart total</th><th>Updated</th></tr>
-    {% for o in orders %}
-    <tr>
-      <td><a href="/orders/{{ o.order_id }}">{{ o.order_id }}</a></td>
-      <td>{{ o.state }}</td>
-      <td>{{ '₹%.0f'|format(o.cart.landed_total_inr) if o.cart else '—' }}</td>
-      <td class="muted">{{ o.updated_at }}</td>
-    </tr>
-    {% endfor %}
-  </table>
+<div class="row between">
+  <h1 style="font-size:1.3em">Your orders</h1>
+  <a href="/ask"><button class="primary">+ New request</button></a>
 </div>
+
+{% if not orders %}
+<div class="card empty-state">
+  <div class="icon">🧺</div>
+  <p><b>No orders yet</b></p>
+  <p class="muted">Head to <a href="/ask">Ask</a> and tell me what you need.</p>
+</div>
+{% else %}
+{% for o in orders | sort(attribute='updated_at', reverse=true) %}
+<a class="order-card" href="/orders/{{ o.order_id }}">
+  <div class="card">
+    <div class="row between">
+      <div>
+        <div style="font-weight:700">{{ o.intent['items'] | join(', ') }}</div>
+        <div class="muted mono">{{ o.order_id }}</div>
+      </div>
+      <span class="badge {{ 'ok' if o.state == 'done' else ('danger' if o.state in ['aborted','refused'] else 'warn') }}">{{ o.state }}</span>
+    </div>
+    <div class="row between spacer-top" style="margin-bottom:0">
+      <span class="muted">{{ '₹%.2f'|format(o.cart.landed_total_inr) if o.cart else 'no cart yet' }}</span>
+      <span class="muted updated-at" data-ts="{{ o.updated_at }}">updated…</span>
+    </div>
+  </div>
+</a>
+{% endfor %}
+{% endif %}
+
+<script>
+document.querySelectorAll('.updated-at').forEach(el => {
+  const d = new Date(parseFloat(el.dataset.ts) * 1000);
+  el.textContent = 'updated ' + d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+});
+</script>
 {% endblock %}

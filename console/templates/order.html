@@ -1,75 +1,164 @@
 {% extends "_layout.html" %}
-{% block content %}
 {% set o = order %}
-<div class="card">
-  <div class="row" style="justify-content:space-between">
-    <h2>{{ o.order_id }}</h2>
-    <span class="badge {{ 'ok' if o.state in ['done'] else ('danger' if o.state in ['aborted','refused'] else 'warn') }}">{{ o.state }}</span>
+{% macro item_icon(name) -%}
+{%- set n = name.lower() -%}
+{%- if 'milk' in n -%}🥛
+{%- elif 'egg' in n -%}🥚
+{%- elif 'bread' in n -%}🍞
+{%- elif 'atta' in n or 'flour' in n or 'wheat' in n -%}🌾
+{%- elif 'biscuit' in n or 'cookie' in n -%}🍪
+{%- elif 'grape' in n -%}🍇
+{%- elif 'onion' in n -%}🧅
+{%- elif 'agarbatti' in n or 'incense' in n -%}🕯️
+{%- elif 'saffron' in n -%}🌸
+{%- else -%}🛒
+{%- endif -%}
+{%- endmacro %}
+{% block content %}
+
+<div class="row between">
+  <div>
+    <div style="font-weight:700; font-size:1.05em">{{ o.intent['items'] | join(', ') }}</div>
+    <div class="muted mono">{{ o.order_id }} · max ₹{{ o.intent.max_total_inr }}{% if o.revision_rounds %} · {{ o.revision_rounds }}/5 revisions{% endif %}</div>
   </div>
-  <p class="muted">Items: {{ o.intent['items'] | join(', ') }} · Max ₹{{ o.intent.max_total_inr }}</p>
-  {% if o.revision_rounds %}<p class="muted">Revision rounds: {{ o.revision_rounds }} / 5</p>{% endif %}
+  <a href="/orders" class="muted" style="text-decoration:none; font-size:0.85em">← All orders</a>
+</div>
+
+<div class="card spacer-top">
+  {% set order_of = ['draft','proposed','approved','executing','done'] %}
+  {% set failed = o.state in ['aborted', 'refused'] %}
+  {% set cur_idx = order_of.index(o.state) if o.state in order_of else (order_of.index('proposed') if o.state == 'revising' else -1) %}
+  <div class="stepper">
+    {% for label in ['Ask','Review','Approved','Paying','Done'] %}
+    {% set i = loop.index0 %}
+    <div class="step {{ 'done' if (not failed and i < cur_idx) else ('active' if (not failed and i == cur_idx) else ('failed' if (failed and i == cur_idx) else '')) }}">
+      <div class="dot">{{ '✓' if (not failed and i < cur_idx) else (loop.index) }}</div>
+      <label>{{ label }}</label>
+    </div>
+    {% endfor %}
+  </div>
 </div>
 
 {% if assistant_message %}
-<div class="card assistant-msg">
-  <div class="assistant-msg-label">🛒 Your shopping assistant</div>
-  <p class="assistant-msg-text">{{ assistant_message }}</p>
+<div class="card assistant">
+  <div class="assistant-avatar">🛍️</div>
+  <div class="assistant-body">
+    <div class="assistant-label">Your shopping assistant</div>
+    <p class="assistant-text">{{ assistant_message }}</p>
+  </div>
 </div>
 {% endif %}
 
 {% if o.state == 'draft' %}
-<div class="card"><p class="muted">Waiting for the worker to search and propose a cart. Run:</p>
-<p class="mono">python -m worker.run {{ o.order_id }}</p></div>
+<div class="card">
+  <div class="row" style="gap:12px">
+    <span class="spin" style="width:18px;height:18px;color:var(--primary)"></span>
+    <div>
+      <p style="margin:0"><b>Searching stores…</b></p>
+      <p class="muted" style="margin:2px 0 0">If this doesn't move on its own yet, start the worker for this order:</p>
+    </div>
+  </div>
+  <p class="mono spacer-top">python -m worker.run {{ o.order_id }}</p>
+</div>
 {% endif %}
 
 {% if o.cart and o.state in ['proposed', 'revising'] %}
 <div class="card">
-  <h3>Proposed cart — {{ o.cart.merchant }} <span class="muted">(v{{ o.cart_version }})</span></h3>
-  <table>
-    <tr><th>Item</th><th>Brand</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr>
+  <div class="row between">
+    <h3 style="margin:0">Proposed cart</h3>
+    <span class="badge neutral" style="text-transform:capitalize">{{ o.cart.merchant }} · v{{ o.cart_version }}</span>
+  </div>
+  <div class="spacer-top">
     {% for l in o.cart.line_items %}
-    <tr><td>{{ l.name }}</td><td>{{ l.brand }}</td><td>{{ l.qty }}</td><td>₹{{ '%.2f'|format(l.unit_price_inr) }}</td><td>₹{{ '%.2f'|format(l.line_total_inr) }}</td></tr>
+    <div class="item-row">
+      <div class="item-icon">{{ item_icon(l.name) }}</div>
+      <div class="item-main">
+        <div class="item-name">{{ l.name }}</div>
+        <div class="item-meta">{{ l.brand }} · qty {{ l.qty }}{% if l.pack_qty %} × {{ l.pack_qty }}-pack{% endif %}</div>
+      </div>
+      <div class="item-price">₹{{ '%.2f'|format(l.line_total_inr) }}<span class="unit">₹{{ '%.2f'|format(l.unit_price_inr) }} each</span></div>
+    </div>
     {% endfor %}
-  </table>
-  <p>Delivery ₹{{ o.cart.fees.delivery }} · Handling ₹{{ o.cart.fees.handling }} · <b>Landed total ₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</b></p>
-  <p class="mono muted">cart_hash: {{ o.cart.cart_hash }}</p>
+  </div>
+  <div class="receipt">
+    <div class="receipt-line"><span>Delivery</span><span>₹{{ '%.2f'|format(o.cart.fees.delivery) }}</span></div>
+    <div class="receipt-line"><span>Handling</span><span>₹{{ '%.2f'|format(o.cart.fees.handling) }}</span></div>
+    <div class="receipt-line total"><span>Total</span><span>₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</span></div>
+  </div>
+</div>
 
-  <h4>Revise before approving</h4>
-  <div class="row">
-    <input id="feedback" style="flex:1" placeholder="e.g. Amul not Britannia, make atta 10kg, drop the biscuits">
-    <button onclick="revise()">Send feedback</button>
+{% if o.comparison and o.comparison | length > 1 %}
+<div class="card">
+  <h3>Why this store</h3>
+  {% for m in o.comparison | sort(attribute='rank') %}
+  <div class="merchant-row {{ 'winner' if m.merchant == o.cart.merchant }}">
+    <span class="merchant-name">{{ '🏆 ' if m.cheapest_by_landed_cost }}{{ m.merchant }}{{ ' (below minimum order)' if m.below_min_order }}</span>
+    <span class="merchant-total">₹{{ '%.2f'|format(m.landed_total_inr) }}</span>
   </div>
-  <div class="row" style="margin-top:12px">
-    <button class="primary" onclick="approveCart()">Approve cart</button>
-    <button class="danger" onclick="abortOrder()">Abort</button>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h4 style="margin-bottom:8px">Anything to change?</h4>
+  <div class="feedback-bar">
+    <input id="feedback" placeholder="e.g. Amul not Britannia, make atta 10kg, drop the biscuits" onkeydown="if(event.key==='Enter') revise()">
+    <button class="primary" id="revise-btn" onclick="revise()" title="Send feedback">➜</button>
   </div>
-  <p id="status" class="muted"></p>
+  <div class="row spacer-top">
+    <button class="primary" id="approve-cart-btn" onclick="approveCart()" style="flex:1">Approve cart — ₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</button>
+    <button class="danger ghost" onclick="abortOrder()">Abort</button>
+  </div>
 </div>
 {% endif %}
 
 {% if o.state == 'approved' %}
-<div class="card">
+<div class="card elevated">
   <h3>Ready to pay</h3>
-  <p>Approved cart total: <b>₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</b></p>
-  <p class="muted">Approving payment re-quotes the merchant first — if the price drifted since you approved the cart, this will refuse rather than charge the new amount.</p>
-  <div class="row">
-    <button class="primary" onclick="approvePayment()">Approve payment</button>
-    <button class="danger" onclick="abortOrder()">Abort</button>
+  <div class="receipt" style="border-top:none; margin-top:0; padding-top:0">
+    <div class="receipt-line total"><span>Approved total</span><span>₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</span></div>
   </div>
-  <p id="status" class="muted"></p>
+  <p class="muted">I'll re-check the price with {{ o.cart.merchant }} first — if anything drifted since you approved, I'll refuse rather than charge the new amount, and you'll see why.</p>
+  <div class="row spacer-top">
+    <button class="primary" id="approve-pay-btn" onclick="approvePayment()" style="flex:1">✅ Approve payment</button>
+    <button class="danger ghost" onclick="abortOrder()">Abort</button>
+  </div>
+</div>
+{% endif %}
+
+{% if o.state == 'executing' %}
+<div class="card">
+  <div class="row" style="gap:12px">
+    <span class="spin" style="width:18px;height:18px;color:var(--primary)"></span>
+    <p style="margin:0"><b>Placing your order…</b></p>
+  </div>
 </div>
 {% endif %}
 
 {% if o.state == 'done' %}
-<div class="card"><h3>✅ Ordered</h3><p>Merchant order: {{ o.merchant_order_id }} · Paid ₹{{ '%.2f'|format(o.payment.amount_inr) }} via {{ o.payment.rail }}</p></div>
-{% endif %}
-{% if o.state in ['aborted', 'refused'] %}
-<div class="card"><h3>⛔ {{ o.state }}</h3></div>
+<div class="card elevated" style="text-align:center; padding:32px 20px">
+  <div style="font-size:2.4em">🎉</div>
+  <h2>Order placed!</h2>
+  <p class="muted">Merchant order <span class="mono">{{ o.merchant_order_id }}</span></p>
+  <p style="font-size:1.3em; font-weight:800">₹{{ '%.2f'|format(o.payment.amount_inr) }}<span class="muted" style="font-weight:400; font-size:0.6em"> via {{ o.payment.rail }}</span></p>
+</div>
 {% endif %}
 
+{% if o.state in ['aborted', 'refused'] %}
 <div class="card">
-  <h3>Reasoning trace</h3>
-  <p class="muted">The full, unabridged record behind the message above — every pick, every rejection, every price, with its source.</p>
+  <div class="row" style="gap:10px">
+    <span style="font-size:1.4em">{{ '🛑' if o.state == 'aborted' else '⚠️' }}</span>
+    <div>
+      <p style="margin:0; font-weight:700; text-transform:capitalize">{{ o.state }}</p>
+      <p class="muted" style="margin:2px 0 0">This order won't proceed any further. Head back to <a href="/ask">Ask</a> to start a new one.</p>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<details class="trace-wrap card">
+  <summary>Behind the scenes — full reasoning trace ({{ trace | length }} steps)</summary>
+  <p class="muted" style="margin-top:8px">Every pick, every rejection, every price, with its source — this is what the message above is generated from.</p>
   {% for span in trace %}
   <div class="trace-span">
     <b>{{ span.actor }}</b> — {{ span.action }} <span class="muted">({{ span.confidence }})</span>
@@ -82,28 +171,48 @@
   {% else %}
   <p class="muted">No spans yet.</p>
   {% endfor %}
-</div>
+</details>
 
 <script>
 const orderId = "{{ o.order_id }}";
+
 async function revise() {
-  const r = await fetch(`/console/order/${orderId}/revise`, {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({instruction_text: document.getElementById('feedback').value})});
-  const data = await r.json();
-  document.getElementById('status').textContent = r.ok ? 'Feedback recorded — waiting for the worker to re-propose.' : ('Refused: ' + (data.detail || JSON.stringify(data)));
-  if (r.ok) setTimeout(()=>location.reload(), 1000);
+  const text = document.getElementById('feedback').value.trim();
+  if (!text) { toast('Type what you\'d like changed first', 'danger'); return; }
+  const btn = document.getElementById('revise-btn');
+  await withLoading(btn, '', async () => {
+    const r = await fetch(`/console/order/${orderId}/revise`, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({instruction_text: text})});
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) { toast('Got it — updating your cart…', 'ok'); setTimeout(()=>location.reload(), 900); }
+    else { toast(friendlyError(data), 'danger'); }
+  });
 }
 async function approveCart() {
-  const r = await fetch(`/console/order/${orderId}/approve_cart`, {method:'POST'});
-  if (r.ok) location.reload(); else document.getElementById('status').textContent = 'Refused: ' + JSON.stringify(await r.json());
+  const btn = document.getElementById('approve-cart-btn');
+  await withLoading(btn, ' Approving…', async () => {
+    const r = await fetch(`/console/order/${orderId}/approve_cart`, {method:'POST'});
+    if (r.ok) { location.reload(); } else { toast(friendlyError(await r.json().catch(()=>({}))), 'danger'); }
+  });
 }
 async function approvePayment() {
-  const r = await fetch(`/console/order/${orderId}/approve_payment`, {method:'POST'});
-  if (r.ok) location.reload(); else document.getElementById('status').textContent = 'Refused: ' + JSON.stringify(await r.json());
+  const btn = document.getElementById('approve-pay-btn');
+  await withLoading(btn, ' Placing your order…', async () => {
+    const r = await fetch(`/console/order/${orderId}/approve_payment`, {method:'POST'});
+    if (r.ok) { location.reload(); } else { toast(friendlyError(await r.json().catch(()=>({}))), 'danger'); }
+  });
 }
 async function abortOrder() {
+  if (!confirm('Stop this order for good? This can\'t be undone.')) return;
   const r = await fetch(`/console/order/${orderId}/abort`, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'reason=user+aborted'});
-  if (r.ok) location.reload();
+  if (r.ok) location.reload(); else toast('Could not abort — try again', 'danger');
+}
+
+// Gently poll while something is happening in the background (the worker
+// searching, revising, or the payment executing) so the human doesn't have
+// to keep hitting refresh by hand.
+if (['draft', 'revising', 'executing'].includes("{{ o.state }}")) {
+  setTimeout(() => location.reload(), 3000);
 }
 </script>
 {% endblock %}

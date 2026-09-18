@@ -1,31 +1,61 @@
 {% extends "_layout.html" %}
 {% block content %}
 <div class="card">
-  <div class="row" style="justify-content:space-between">
-    <span class="badge {{ 'warn' if mode != 'live' else 'danger' }}">mode: {{ mode }}</span>
-    <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">kill switch: {{ kill_tier }}</span>
+  <div class="row between">
+    <div class="chip-row">
+      <span class="badge {{ 'warn' if mode != 'live' else 'danger' }}">{{ 'Test mode — no real orders' if mode != 'live' else 'LIVE — real money' }}</span>
+      <span class="badge {{ 'ok' if kill_tier == 'none' else 'danger' }}">{{ 'All systems go' if kill_tier == 'none' else 'Stopped: ' + kill_tier }}</span>
+    </div>
   </div>
-  <p class="muted">Remaining today ₹{{ '%.0f'|format(remaining_today) }} · remaining this month ₹{{ '%.0f'|format(remaining_month) }}</p>
+  <p class="muted spacer-top" style="margin-bottom:0">Budget left today <b>₹{{ '%.0f'|format(remaining_today) }}</b> · this month <b>₹{{ '%.0f'|format(remaining_month) }}</b></p>
 </div>
+
+<div class="card hero elevated">
+  <h1>What can I pick up for you?</h1>
+  <p>Tell me what you need in plain language — I'll compare prices across stores and bring you the best cart to approve.</p>
+  <div class="stack spacer-top">
+    <textarea id="items" rows="3" placeholder="e.g. milk, a dozen eggs, atta 5kg, biscuits"></textarea>
+    <div class="chip-row">
+      <span class="chip" onclick="fillExample('milk, eggs, atta 5kg, biscuits')">🥛 Weekly basics</span>
+      <span class="chip" onclick="fillExample('30 eggs, 1 pack of bread, 2 kg atta')">🍞 Bulk restock</span>
+      <span class="chip" onclick="fillExample('biscuits, 500gm grapes')">🍪 Small top-up</span>
+    </div>
+    <div class="row">
+      <div style="flex:1; min-width:160px">
+        <label class="field-label" for="max_total">Don't spend more than</label>
+        <input id="max_total" type="number" placeholder="800" value="800">
+      </div>
+      <div style="align-self:flex-end">
+        <button class="primary" id="ask-btn" onclick="submitAsk()">Start shopping →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="card">
-  <h2>What do you want to buy?</h2>
-  <textarea id="items" rows="3" style="width:100%" placeholder="e.g. milk, eggs, atta 5kg, biscuits"></textarea>
-  <div class="row" style="margin-top:8px">
-    <input id="max_total" type="number" placeholder="Max total ₹" value="800">
-    <button class="primary" onclick="submitAsk()">Start shopping</button>
-  </div>
-  <p id="status" class="muted"></p>
+  <p class="muted" style="margin:0">🔒 I'll never pay for anything without showing you the full cart first and getting your explicit approval — see how on the <a href="/control">Control</a> page.</p>
 </div>
+
 <script>
+function fillExample(text) {
+  document.getElementById('items').value = text;
+  document.getElementById('items').focus();
+}
 async function submitAsk() {
-  const items = document.getElementById('items').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const raw = document.getElementById('items').value.trim();
+  if (!raw) { toast('Tell me what to buy first', 'danger'); return; }
+  const items = raw.split(',').map(s=>s.trim()).filter(Boolean);
   const max_total_inr = parseInt(document.getElementById('max_total').value || '0', 10);
-  const r = await fetch('/api/intent', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({items, max_total_inr})});
-  if (!r.ok) { document.getElementById('status').textContent = 'Failed: ' + (await r.text()); return; }
-  const data = await r.json();
-  document.getElementById('status').textContent = 'Order ' + data.order_id + ' created. Start the worker against it: python -m worker.run ' + data.order_id;
-  location.href = '/orders/' + data.order_id;
+  if (!max_total_inr) { toast('Set a budget so I know when to stop', 'danger'); return; }
+  const btn = document.getElementById('ask-btn');
+  await withLoading(btn, ' Sending your request…', async () => {
+    const r = await fetch('/api/intent', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({items, max_total_inr})});
+    if (!r.ok) { toast(friendlyError(await r.json().catch(()=>null)), 'danger'); return; }
+    const data = await r.json();
+    toast('Got it — searching stores now…', 'ok');
+    setTimeout(() => location.href = '/orders/' + data.order_id, 500);
+  });
 }
 </script>
 {% endblock %}
