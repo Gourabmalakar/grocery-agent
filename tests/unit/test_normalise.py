@@ -25,3 +25,24 @@ def test_unknown_unit_does_not_crash():
     n = normalise(1, "bottle", 100)
     assert n.base_kind == "unknown"
     assert n.price_per_base_unit == 100
+
+
+def test_parse_quantity_phrase_bare_count():
+    from grocery.compare.normalise import parse_quantity_phrase
+    assert parse_quantity_phrase("30 eggs") == (30.0, "count")
+
+
+def test_parse_quantity_phrase_mass():
+    from grocery.compare.normalise import parse_quantity_phrase
+    assert parse_quantity_phrase("2 kg atta") == (2000.0, "mass_g")
+    assert parse_quantity_phrase("500gm grapes") == (500.0, "mass_g")
+
+
+def test_parse_quantity_phrase_no_leading_number():
+    from grocery.compare.normalise import parse_quantity_phrase
+    assert parse_quantity_phrase("milk") is None
+
+
+def test_parse_quantity_phrase_unknown_unit_treated_as_count():
+    from grocery.compare.normalise import parse_quantity_phrase
+    assert parse_quantity_phrase("1 pack of bread") == (1.0, "count")

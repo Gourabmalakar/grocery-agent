@@ -2,11 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 .env
-data/*.db
-data/*.sqlite
-data/vault/
-data/audit/
-data/keys/
+# All of data/ is runtime state (mandate keys, ledger, audit logs, orders,
+# vault) — none of it belongs in version control. This used to list specific
+# subpaths and missed data/orders/ and data/mandates/, which briefly leaked a
+# real in-progress order into a git-add; ignore the whole directory instead.
+data/
 console/PANIC
 console/PAUSE
 *.egg-info/

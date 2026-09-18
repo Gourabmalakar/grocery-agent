@@ -17,6 +17,7 @@ absence is the point, not an oversight.
 """
 from __future__ import annotations
 
+import math
 import re
 import sys
 import time
@@ -24,7 +25,9 @@ import time
 from grocery import config
 from grocery.adapters.mock import MockAdapter, fetch_merchant_meta, all_mock_adapters
 from grocery.compare import landed_cost, rank
+from grocery.compare import normalise as normalise_mod
 from grocery.mandates import cart as cart_mandate
+from grocery import narrator
 from mockstore.catalog import CATALOG
 from worker import tools
 
@@ -89,16 +92,46 @@ def _interpret_revision(instruction_text: str) -> dict:
     if m:
         hints["drop"].append(m.group(2))
 
-    m = re.search(r"\b(\w+)\s+not\s+(\w+)", t)  # "Amul not Britannia"
+    # "Amul not Britannia" — both sides must be alphabetic (a brand name),
+    # never digits. Without that restriction this matched "30 eggs not 6"
+    # as a brand swap from "6" to "eggs", a real false positive caught by
+    # hand: it silently did nothing (no real brand is ever "6"), while the
+    # actual request — 30 eggs instead of 6 — went completely unaddressed.
+    m = re.search(r"\b([a-z]+)\s+not\s+([a-z]+)\b", t)
     if m:
         hints["brand_swap"] = {"to": m.group(1), "away_from": m.group(2)}
 
     return hints
 
 
+def note_if_revision_not_understood(order_id: str, instruction_text: str, hints: dict) -> bool:
+    """Returns True if `hints` carries an actionable change. If not, records
+    a `revision_not_understood` DecisionRecord explaining exactly why —
+    rather than letting the caller silently re-propose an unchanged cart
+    with no trace of what went wrong. Factored out of main()'s polling loop
+    so it is exercised directly by tests, not only by the loop that happens
+    to call it in production."""
+    actionable = bool(hints["drop"]) or hints["brand_swap"] is not None
+    if not actionable:
+        tools.record_decision(
+            trace_id=order_id, actor="shopper", action="revision_not_understood",
+            reasoning=(
+                f"Could not extract an actionable change from: {instruction_text!r}. "
+                f"Phase 0's revision interpreter is pattern-based and only understands "
+                f"'drop/remove/no <item>' and '<brand> not <brand>' where both are catalogue "
+                f"brand names — it does not parse quantity corrections, requests for items or "
+                f"brands outside the mock catalogue, or general complaints. The cart below is "
+                f"otherwise unchanged from before this feedback."
+            ),
+            confidence="high",
+        )
+    return actionable
+
+
 def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
                        brand_swap: dict | None = None, drop_terms: list[str] | None = None,
-                       cart_version: int = 1, amendment_ids: list[str] | None = None):
+                       cart_version: int = 1, amendment_ids: list[str] | None = None,
+                       revision_instruction: str | None = None, revision_not_understood: bool = False):
     drop_terms = drop_terms or []
     active_items = [
         it for it in items
@@ -110,10 +143,13 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
     meta = fetch_merchant_meta()
     per_merchant_lines: dict[str, list[dict]] = {m: [] for m in meta}
     per_merchant_subtotal: dict[str, float] = {m: 0.0 for m in meta}
+    not_found_queries: list[str] = []  # matched no catalogue item anywhere
+    query_scope: dict[str, dict] = {}  # query -> {"item_keys": [...], "forced_brand": str|None}, for the missing-at-winner pass below
 
     for query in active_items:
         item_keys = _candidates_for_query(query)
         if not item_keys:
+            not_found_queries.append(query)
             tools.record_decision(
                 trace_id=order_id, actor="price-scout", action="item_not_found",
                 reasoning=f"no catalogue match for '{query}'", confidence="high",
@@ -137,6 +173,15 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
             if away in brands_here:
                 query_forced_brand = brand_swap["to"]
 
+        query_scope[query] = {"item_keys": item_keys, "forced_brand": query_forced_brand}
+
+        # How much was actually asked for — "30 eggs" means 30 eggs, not one
+        # pack of whatever size the cheapest listing happens to come in.
+        # Parsed once per query (the requested amount doesn't vary by
+        # merchant); each merchant's listing then converts it into a pack
+        # count using its own pack size.
+        requested = normalise_mod.parse_quantity_phrase(query)
+
         for merchant in meta:
             best_key, listing, rejected = _pick_best_listing(item_keys, merchant, forced_brand=query_forced_brand)
             if not listing:
@@ -147,19 +192,35 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
                     confidence="high",
                 )
                 continue
+
+            norm = normalise_mod.normalise(listing["pack_qty"], listing["pack_unit"], listing["price_inr"])
+            qty = 1
+            qty_note = ""
+            if requested is not None:
+                req_amount, req_kind = requested
+                if req_kind == norm.base_kind:
+                    qty = max(1, math.ceil(req_amount / norm.base_quantity))
+                    qty_note = (f" — requested {req_amount:g} {req_kind}, "
+                                f"{qty} x {listing['pack_qty']}{listing['pack_unit']} pack(s) covers it")
+                else:
+                    qty_note = (f" — requested quantity ('{query}') is a {req_kind} but this item is sold by "
+                                f"{norm.base_kind}; defaulting to 1 pack rather than guess a conversion")
+
+            line_total = listing["price_inr"] * qty
             line = {
                 "sku": listing["sku"], "name": listing["name"], "brand": listing["brand"],
-                "qty": 1, "pack_qty": listing["pack_qty"], "pack_unit": listing["pack_unit"],
-                "unit_price_inr": listing["price_inr"], "line_total_inr": listing["price_inr"],
+                "qty": qty, "pack_qty": listing["pack_qty"], "pack_unit": listing["pack_unit"],
+                "unit_price_inr": listing["price_inr"], "line_total_inr": line_total,
                 "price_source": "mockstore_page", "asof": time.time(),
                 "intent_ref": lineage_ref,  # traces to the intent, or the latest amendment if this is a revision
             }
             per_merchant_lines[merchant].append(line)
-            per_merchant_subtotal[merchant] += listing["price_inr"]
+            per_merchant_subtotal[merchant] += line_total
             tools.record_decision(
                 trace_id=order_id, actor="price-scout", action="select_item",
-                reasoning=f"{merchant}: chose {listing['brand']} {listing['name']} for '{query}' "
-                          f"at ₹{listing['price_inr']:.2f} — cheapest per normalised unit among candidates",
+                reasoning=f"{merchant}: chose {listing['brand']} {listing['name']} x{qty} for '{query}' "
+                          f"at ₹{listing['price_inr']:.2f} each (₹{line_total:.2f} total) — cheapest per "
+                          f"normalised unit among candidates{qty_note}",
                 evidence=[{"source": merchant, "sku": listing["sku"], "price": listing["price_inr"],
                            "price_source": "mockstore_page", "asof": time.time()}],
                 alternatives_rejected=rejected,
@@ -225,7 +286,27 @@ def _plan_and_propose(order_id: str, items: list[str], max_total_inr: int,
         amendment_ids=amendment_ids or [],
     )
     cart_mandate.persist(signed_cart)
-    tools.propose_cart(order_id, signed_cart, comparison=comparison)
+
+    # Which requested items simply weren't available at the WINNING
+    # merchant specifically (as opposed to not_found_queries, which weren't
+    # in the catalogue at all, anywhere) — recomputed with the same scoping
+    # already used above rather than tracked ad hoc during the loop, so this
+    # can never disagree with what was actually decided.
+    missing_at_winner = [
+        query for query, scope in query_scope.items()
+        if _pick_best_listing(scope["item_keys"], winner.merchant, forced_brand=scope["forced_brand"])[1] is None
+    ]
+
+    if revision_not_understood:
+        narrative = narrator.narrate_revision_not_understood(instruction_text=revision_instruction or "")
+    else:
+        narrative = narrator.narrate_proposal(
+            cart=signed_cart, comparison=comparison,
+            missing_items=missing_at_winner, not_found_items=not_found_queries,
+            max_total_inr=max_total_inr, revision_instruction=revision_instruction,
+        )
+
+    tools.propose_cart(order_id, signed_cart, comparison=comparison, narrative=narrative)
     return signed_cart
 
 
@@ -234,15 +315,31 @@ def order_id_to_intent_id(order_id: str) -> str:
 
 
 def main(order_id: str):
+    """Safe to run (or re-run) against an order in ANY state — including one
+    a previous worker process already proposed a cart for, or one sitting on
+    a pending revision nobody was running to pick up. Caught by hand: running
+    this a second time against an already-proposed order crashed outright
+    with an unhandled 409, because the old version always called
+    _plan_and_propose() unconditionally as if the order were always fresh."""
     start = time.time()
     order = tools.get_order(order_id)
     items = order["intent"]["items"]
     max_total = order["intent"]["max_total_inr"]
+    state = order["state"]
+    amendments = order.get("amendments", [])
 
-    print(f"[worker] planning for {order_id}: {items} under ₹{max_total}")
-    _plan_and_propose(order_id, items, max_total)
+    if state == "draft":
+        print(f"[worker] planning for {order_id}: {items} under ₹{max_total}")
+        _plan_and_propose(order_id, items, max_total)
+        seen_amendments = 0
+    elif state == "revising":
+        print(f"[worker] order {order_id} has a pending revision waiting — picking it up now")
+        seen_amendments = len(amendments) - 1  # let the loop below treat the latest amendment as new
+    else:
+        print(f"[worker] order {order_id} is already '{state}' — nothing to plan; watching for a "
+              f"further revision or a terminal state")
+        seen_amendments = len(amendments)
 
-    seen_amendments = 0
     while True:
         if time.time() - start > MAX_WALL_CLOCK_SECONDS:
             print("[worker] wall-clock limit reached — stopping")
@@ -259,13 +356,17 @@ def main(order_id: str):
             if len(amendments) > seen_amendments:
                 latest = amendments[-1]
                 hints = _interpret_revision(latest["instruction_text"])
-                print(f"[worker] re-planning after revision: {latest['instruction_text']!r} -> {hints}")
+                actionable = note_if_revision_not_understood(order_id, latest["instruction_text"], hints)
+                print(f"[worker] re-planning after revision: {latest['instruction_text']!r} -> {hints}"
+                      + ("" if actionable else " (NOT ACTIONABLE — see trace)"))
                 _plan_and_propose(
                     order_id, items, max_total,
                     brand_swap=hints["brand_swap"],
                     drop_terms=hints["drop"],
                     cart_version=order["cart_version"] + 1,
                     amendment_ids=[a["amendment_id"] for a in amendments],
+                    revision_instruction=latest["instruction_text"],
+                    revision_not_understood=not actionable,
                 )
                 seen_amendments = len(amendments)
         elif state in ("approved", "executing", "done", "aborted", "refused"):

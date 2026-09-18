@@ -10,9 +10,10 @@ countable items (eggs, biscuit packs sold by count).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-_MASS_TO_GRAMS = {"g": 1, "gram": 1, "grams": 1, "kg": 1000, "kilogram": 1000, "kilograms": 1000}
+_MASS_TO_GRAMS = {"g": 1, "gm": 1, "gram": 1, "grams": 1, "kg": 1000, "kilogram": 1000, "kilograms": 1000}
 _VOLUME_TO_ML = {"ml": 1, "millilitre": 1, "millilitres": 1, "l": 1000, "litre": 1000, "litres": 1000}
 _COUNT_UNITS = {"count", "unit", "units", "pcs", "piece", "pieces"}
 
@@ -49,6 +50,34 @@ class NormalisedPrice:
     base_quantity: float    # total grams / ml / count in the pack
     price_per_base_unit: float   # ₹ per gram / per ml / per count
     price_per_100_base: float    # ₹ per 100g / 100ml / 100 count — the display figure
+
+
+def parse_quantity_phrase(text: str) -> tuple[float, str] | None:
+    """Extract a leading requested quantity from a free-text item phrase —
+    "30 eggs" -> (30, "count"), "2 kg atta" -> (2000, "mass_g"), "500gm
+    grapes" -> (500, "mass_g"). Returns None when the phrase carries no
+    explicit leading number (plain "milk"), in which case the caller should
+    default to a single pack.
+
+    This exists because, before it did, every item was silently bought at
+    qty=1 regardless of what number the request actually named — "30 eggs"
+    and "eggs" produced an identical cart line. That is a correctness bug
+    (bought quantity silently wrong), not a cosmetic one; see worker/run.py's
+    use of this function to decide how many packs of the chosen listing to
+    buy, and the note in CHANGELOG-style comments there about why it applies
+    at first-ask time, not only during revision."""
+    t = text.strip().lower()
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*([a-z]*)", t)
+    if not m:
+        return None
+    amount = float(m.group(1))
+    unit_word = m.group(2)
+    if not unit_word:
+        return amount, "count"  # a bare leading number before a noun means a count: "30 eggs"
+    base_kind, multiplier = _parse_unit(unit_word)
+    if base_kind == "unknown":
+        return amount, "count"  # e.g. "1 pack" — treat the named unit itself as one count
+    return amount * multiplier, base_kind
 
 
 def normalise(pack_qty: float, pack_unit: str, price_inr: float) -> NormalisedPrice:

@@ -83,6 +83,7 @@ class Order:
     cart: dict[str, Any] | None = None
     cart_version: int = 1
     comparison: list[dict[str, Any]] | None = None
+    narrative: str | None = None  # the assistant's plain-English message for the current state
     amendments: list[dict[str, Any]] = field(default_factory=list)
     revision_rounds: int = 0
     payment: dict[str, Any] | None = None
@@ -142,7 +143,8 @@ def create_order(signed_intent: dict[str, Any]) -> Order:
     return order
 
 
-def propose_cart(order_id: str, signed_cart: dict[str, Any], comparison: list[dict[str, Any]] | None = None) -> Order:
+def propose_cart(order_id: str, signed_cart: dict[str, Any], comparison: list[dict[str, Any]] | None = None,
+                  narrative: str | None = None) -> Order:
     """Called by the worker (via HTTP) once it has assembled a cart. Moves
     draft/revising -> proposed. The cart must trace to the current intent
     (or its latest amendment) — checked here, not trusted from the caller."""
@@ -156,6 +158,7 @@ def propose_cart(order_id: str, signed_cart: dict[str, Any], comparison: list[di
     order.cart = signed_cart
     order.cart_version = signed_cart.get("cart_version", 1)
     order.comparison = comparison
+    order.narrative = narrative
     audit_log.append("order.cart_proposed", {
         "order_id": order_id, "cart_id": signed_cart["cart_id"],
         "cart_version": order.cart_version, "landed_total_inr": signed_cart["landed_total_inr"],

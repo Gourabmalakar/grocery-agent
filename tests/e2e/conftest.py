@@ -15,9 +15,23 @@ import multiprocessing
 import os
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
+
+# PANIC/PAUSE are deliberately ROOT-relative even in a subprocess pointed at
+# an isolated DATA_DIR — production needs `touch console/PANIC` to work from
+# any terminal without knowing DATA_DIR, so grocery.config never puts these
+# under it. That's correct in production and a real hazard here: a test that
+# trips PANIC through a real subprocess writes the ACTUAL repo file, which
+# then poisons every other e2e test in the same run (and, if a test forgets
+# to clean up, silently blocks a real console.app run afterward). Belt: any
+# test that flips these must clean up itself; braces: this fixture removes
+# them unconditionally on teardown regardless of which test left them.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PANIC_FILE = _REPO_ROOT / "console" / "PANIC"
+_PAUSE_FILE = _REPO_ROOT / "console" / "PAUSE"
 
 
 def _run_uvicorn(app_import_string: str, port: int, env: dict):
@@ -81,3 +95,5 @@ def live(tmp_path):
         console_proc.terminate()
         mock_proc.join(timeout=5)
         console_proc.join(timeout=5)
+        _PANIC_FILE.unlink(missing_ok=True)
+        _PAUSE_FILE.unlink(missing_ok=True)

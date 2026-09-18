@@ -30,9 +30,10 @@ def get_order(order_id: str) -> dict[str, Any]:
     return r.json()
 
 
-def propose_cart(order_id: str, signed_cart: dict[str, Any], comparison: list[dict] | None = None) -> dict[str, Any]:
+def propose_cart(order_id: str, signed_cart: dict[str, Any], comparison: list[dict] | None = None,
+                  narrative: str | None = None) -> dict[str, Any]:
     r = requests.post(f"{CONSOLE_URL}/api/order/{order_id}/propose_cart",
-                       json={"cart": signed_cart, "comparison": comparison}, timeout=10)
+                       json={"cart": signed_cart, "comparison": comparison, "narrative": narrative}, timeout=10)
     r.raise_for_status()
     return r.json()
 

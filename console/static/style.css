@@ -20,3 +20,6 @@ nav a { margin-right: 16px; color: var(--fg); }
 .muted { opacity: 0.65; font-size: 0.9em; }
 .trace-span { border-left: 2px solid var(--border); padding-left: 10px; margin: 8px 0; }
 .mono { font-family: ui-monospace, monospace; font-size: 0.85em; }
+.assistant-msg { background: color-mix(in srgb, var(--accent) 8%, var(--card)); border-color: var(--accent); }
+.assistant-msg-label { font-weight: 600; font-size: 0.85em; opacity: 0.8; margin-bottom: 6px; }
+.assistant-msg-text { white-space: pre-wrap; line-height: 1.5; margin: 0; }

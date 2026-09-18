@@ -10,6 +10,13 @@
   {% if o.revision_rounds %}<p class="muted">Revision rounds: {{ o.revision_rounds }} / 5</p>{% endif %}
 </div>
 
+{% if assistant_message %}
+<div class="card assistant-msg">
+  <div class="assistant-msg-label">🛒 Your shopping assistant</div>
+  <p class="assistant-msg-text">{{ assistant_message }}</p>
+</div>
+{% endif %}
+
 {% if o.state == 'draft' %}
 <div class="card"><p class="muted">Waiting for the worker to search and propose a cart. Run:</p>
 <p class="mono">python -m worker.run {{ o.order_id }}</p></div>
@@ -62,6 +69,7 @@
 
 <div class="card">
   <h3>Reasoning trace</h3>
+  <p class="muted">The full, unabridged record behind the message above — every pick, every rejection, every price, with its source.</p>
   {% for span in trace %}
   <div class="trace-span">
     <b>{{ span.actor }}</b> — {{ span.action }} <span class="muted">({{ span.confidence }})</span>

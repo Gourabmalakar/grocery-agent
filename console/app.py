@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from grocery import config, killswitch
+from grocery import config, killswitch, narrator
 from grocery.audit import log as audit_log
 from grocery.audit import decisions as decision_log
 from grocery.audit import verify as audit_verify
@@ -106,7 +106,11 @@ def order_page(request: Request, order_id: str):
     _require_session(request)
     order = approval.load(order_id)
     trace = decision_log.trace(order_id)
-    return templates.TemplateResponse(request, "order.html", {"order": order.to_json(), "trace": trace})
+    order_json = order.to_json()
+    assistant_message = narrator.narrate_for_order(order_json)
+    return templates.TemplateResponse(request, "order.html", {
+        "order": order_json, "trace": trace, "assistant_message": assistant_message,
+    })
 
 
 @app.get("/orders", response_class=HTMLResponse)
@@ -178,6 +182,7 @@ def api_get_order(order_id: str):
 class CartProposeIn(BaseModel):
     cart: dict[str, Any]
     comparison: list[dict[str, Any]] | None = None
+    narrative: str | None = None
 
 
 @app.post("/api/order/{order_id}/propose_cart")
@@ -185,7 +190,7 @@ def api_propose_cart(order_id: str, body: CartProposeIn):
     """The worker's ONLY write path — it can propose a cart, nothing else.
     No route here mints a PaymentMandate or calls a rail."""
     try:
-        order = approval.propose_cart(order_id, body.cart, body.comparison)
+        order = approval.propose_cart(order_id, body.cart, body.comparison, body.narrative)
     except (approval.IllegalTransition, approval.ApprovalRefused) as e:
         raise HTTPException(409, str(e))
     return order.to_json()
