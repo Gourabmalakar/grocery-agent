@@ -10,5 +10,11 @@ itsdangerous==2.2.0
 requests==2.32.3
 pytest==8.3.4
 pytest-asyncio==0.24.0
+playwright==1.49.1
 
 # Phase 1 (WebAuthn passkeys) will add: webauthn
+#
+# playwright needs its browser binary downloaded once, separately from pip:
+#   ./.venv/bin/playwright install chromium
+# Only needed for grocery/adapters/*_browser.py (Phase 2 real-site reading);
+# nothing else in the repo touches a real browser.

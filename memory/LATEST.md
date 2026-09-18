@@ -6,25 +6,25 @@
 
 ## Where the build stands
 
-Phase 0 complete and hardened by real usage (Gourab ran a real order through
-it and found genuine bugs, all fixed). Phase 1 in progress:
-`transaction-sentinel`'s mechanical checks, the evaluator criteria, and the
-adversarial/killswitch/sentinel test suites are built and green; WebAuthn +
-Tailscale are deferred until Gourab sets up Tailscale (see
-`SETUP-WEBAUTHN.md`) — passphrase auth covers both approval points
-meanwhile. 93 tests passing.
+Phase 0 complete and hardened by real usage. Phase 1 in progress
+(`transaction-sentinel`'s mechanical checks, evaluator criteria, and the
+adversarial/killswitch/sentinel suites are built and green; WebAuthn +
+Tailscale deferred — see `SETUP-WEBAUTHN.md`). Phase 2 started: a real,
+read-only Blinkit adapter is live and verified against the actual site.
+98 tests passing (2 more skipped by default — live-network, opt-in).
 
-The Console was redesigned this session into a consumer-app-styled UI
+The Console was redesigned into a consumer-app-styled UI this session
 (stepper, chat-style assistant bubble, item cards, receipt totals) — and in
 the course of that redesign, found and fixed a real bug that had been there
 since Phase 0's first commit: **there was no `StaticFiles` mount in
 `console/app.py`**, so `/static/style.css` 404'd on every page load and the
 whole console had been rendering completely unstyled the entire time. Fixed;
-now covered by a regression test (`tests/e2e/test_pages_render.py`).
+now covered by a regression test.
 
 **MODE=dry_run by default. Nothing in this repo can touch real money or a
-real merchant yet** — Phase 2 (real-site read-only adapters), Phase 3
-(UPI handoff), Phase 4 (capped wallet rail, live mode) are not built.
+real merchant yet** — the order flow (build_cart → quote → place_order)
+still runs entirely on MockAdapter. Phase 3 (UPI handoff) and Phase 4
+(capped wallet rail, live mode) are not built.
 
 ## Facts established — do not re-derive
 
@@ -40,47 +40,70 @@ real merchant yet** — Phase 2 (real-site read-only adapters), Phase 3
 - Payment execution rebuilds the merchant's cart and re-quotes it at the
   last possible moment before charging — the actual price-drift defence,
   not just a hash comparison against a stale number.
-- Swiggy Builders Club (Instamart MCP, OAuth 2.1+PKCE) is the intended
-  durable adapter path; application to `builders@swiggy.in` is a Phase-0
-  parallel task, not yet sent as of this writing.
-- **The console/app.py `StaticFiles` mount was missing entirely through
-  Phase 0** — every template linked `/static/style.css` but nothing served
-  it. Found visually while redesigning the UI, not by any earlier test
-  (nothing had asserted on the stylesheet's own response before). Fixed,
-  and now asserted on.
+- **Neither Swiggy Instamart's official MCP nor Zepto's official MCP is
+  "read-only, no account" — checked live this session.** Both require
+  OAuth-linking a real personal account for essentially everything,
+  including search; Zepto's is explicitly "not a sandbox," and any order it
+  places is real. Swiggy Builders Club is real and invite-led for
+  production (`builders@swiggy.in`, not yet sent), with a free local
+  sandbox for prototyping against tool schemas — but that doesn't cover an
+  anonymous/read-only tier either. **BigBasket blocks non-browser traffic
+  outright** (Akamai `Access Denied` on the plain homepage). Given this,
+  Gourab chose: build the Blinkit browser adapter now, revisit real MCP
+  integration only after Phase 3 proves out — don't jump to linking a real
+  account ahead of the plan's phasing.
+- **Blinkit gates its catalogue behind a delivery location, not a login** —
+  no account needed to see real prices. That location lives in two plain
+  cookies (`gr_1_lat` / `gr_1_lon`, real coordinates), discovered by
+  inspecting the site as an ordinary visitor — `grocery/adapters/
+  blinkit_browser.py` sets them directly rather than driving the
+  interactive location-autocomplete picker on every call.
+- Blinkit's page is Tailwind utility classes with no semantic
+  `data-test-id`, and the DOM nesting around a given anchor text is NOT
+  stable across page loads (confirmed directly — the same "Inclusive of all
+  taxes" disclaimer had different ancestor structure on two consecutive
+  loads of the same product page). The adapter parses by TEXT-LINE SEQUENCE
+  instead of DOM-tree position for exactly this reason.
+- `console/app.py`'s `StaticFiles` mount was missing entirely through
+  Phase 0 — every template linked `/static/style.css` but nothing served
+  it. Found visually while redesigning the UI. Fixed, and now asserted on.
 - The `live` e2e fixture (real mockstore + console subprocesses) moved from
   `tests/e2e/conftest.py` to the top-level `tests/conftest.py` so other test
-  directories (e.g. `tests/sentinel/`) can reuse it without a second copy of
-  the process-spinning logic. The sentinel suite ended up not needing it —
-  constructing order/ledger/mandate files directly was faster and just as
-  real a test of the check functions — but it's available either way.
+  directories can reuse it — `tests/adapters/`'s MockAdapter conformance
+  tests now use it too.
+- Every `grocery.*`/`console.*` import in a test that uses the `live`
+  fixture must happen INSIDE the test function, never at module level — the
+  fixture purges those modules from `sys.modules` before yielding, so a
+  module-level import binds to a stale, pre-purge class and later
+  `isinstance()` checks against it silently fail even on structurally
+  identical objects. Hit this directly writing `tests/adapters/`; fixed by
+  moving the imports inline, which is already the convention every other
+  test file using `live` follows.
 - `transaction-sentinel`'s checks read `console.approval` for order state
   rather than re-parsing order JSON files themselves — a deliberate, noted
-  exception to "grocery/ doesn't import console/", since duplicating that
-  parsing would be exactly the kind of second implementation the project
-  elsewhere warns against.
+  exception to "grocery/ doesn't import console/".
 - `item_unavailable` decisions now record `evidence=[{"source": merchant}]`
-  (they didn't before) — needed to make `check_adapter_health` possible at
-  all; without it, which merchant a miss happened at lived only in a
-  free-text reasoning string, not in structured evidence.
+  — needed to make `check_adapter_health` possible at all.
 
 ## Open questions
 
 - Whether Swiggy's MCP payment tools are agent-executed or user-redirected —
   unverified, blocks the Phase-4 Swiggy rail decision.
-- Whether Swiggy Builders Club has a sandbox.
-- Tailscale dependency for phone Face ID (Phase 1) — not yet installed;
-  Gourab chose to defer this specifically and build the rest of Phase 1
-  first (2026-09-18).
+- Tailscale dependency for phone Face ID (Phase 1) — deferred by Gourab's
+  choice (2026-09-18).
 - The mock catalog is still only ~6 SKUs — realistic multi-item grocery
-  lists will partially miss. Not yet decided whether to expand it.
+  lists will partially miss the order flow (which still runs on mock).
+  Real prices are now visible via the Blinkit adapter regardless.
+- Whether to build Zepto/BigBasket browser adapters next, or move on to
+  wiring Blinkit's real prices into an actual (still mock-carting) landed-
+  cost comparison, or start Phase 3 (UPI handoff) — not yet decided.
 
 ## Next session should
 
-Pick up whichever of these Gourab asks for next: WebAuthn + Tailscale setup
-(once he's installed Tailscale — see `SETUP-WEBAUTHN.md`), the scheduled
-heartbeat for sentinel sweeps (currently on-demand only, via the Control
-page or `python -m grocery.sentinel.report`), Phase 2 real-site read-only
-adapters, or expanding the mock catalog. Don't start any of these
-unprompted — the last few sessions have each had a clear, specific ask;
-keep following that pattern rather than front-running the plan.
+Pick up whichever of these Gourab asks for next: another browser adapter
+(Zepto is likely similarly tractable; BigBasket is blocked outright and
+would need a different approach entirely), wiring real Blinkit prices into
+the worker's comparison step (still mock-carting), WebAuthn + Tailscale
+setup, the scheduled sentinel heartbeat, or Phase 3 UPI handoff. Don't start
+any of these unprompted — keep following the session-by-session pattern
+rather than front-running the plan.

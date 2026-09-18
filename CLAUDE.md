@@ -78,8 +78,34 @@ grocery/    deterministic Python — mandates, ledger, audit, compare, kill
                   logs findings and trips PANIC on a fatal one (report.py).
 mockstore/  three fake merchants. Phase 0-1's entire storefront — real
             catalogues, real-shaped bugs (min-order thresholds, out-of-stock,
-            price drift), zero real money and zero ToS risk.
+            price drift), zero real money and zero ToS risk. Still what the
+            actual order flow (build_cart → quote → place_order) runs
+            against — real adapters below are read-only so far.
 ```
+
+### Real merchant adapters (Phase 2 — read-only)
+
+`grocery/adapters/blinkit_browser.py` reads real Blinkit prices via a
+headless browser, logged out — no account, no cart, no order. Confirmed
+live: neither Blinkit nor BigBasket has an official read-only price API
+(BigBasket blocks non-browser traffic outright — Akamai `Access Denied`,
+which this repo will not try to get past); Swiggy's Instamart MCP and
+Zepto's official MCP both require linking a real user account for
+essentially everything, including search, so neither fits "read-only, no
+account" either. `search()`/`get_item()` parse real page structure and
+stable anchor text rather than CSS class names (Tailwind utility classes,
+which drift with any redesign) — see the module docstring for the exact
+anchors and why each was chosen. `build_cart()`/`quote()`/`place_order()`
+raise `NotImplementedError` unconditionally, including when `authorized=True`
+— this adapter must never be trusted to gate a write, because nothing has
+ever wired it to anything that could check that flag for real.
+
+Run `python -m grocery.adapters.blinkit_browser "atta 5kg"` for a live demo
+that touches nothing else in the system. `tests/adapters/test_adapter_
+contract.py` is Suite B (mock-based, always runs); `tests/adapters/
+test_blinkit_browser_live.py` hits the real site and is skipped unless
+`RUN_LIVE_ADAPTER_TESTS=1` — real-site tests don't belong in the default,
+network-free `pytest` run.
 
 ## Mode gate
 

@@ -63,3 +63,11 @@ SESSION_SECRET_KEY = _env("SESSION_SECRET_KEY", "") or "dev-only-insecure-key-se
 # from a terminal even if the console process is dead.
 PANIC_FILE = ROOT / "console" / "PANIC"
 PAUSE_FILE = ROOT / "console" / "PAUSE"
+
+# Phase 2 read-only browser adapters (grocery/adapters/*_browser.py) — sites
+# like Blinkit gate their catalogue behind a delivery location rather than a
+# login. This is a real public coordinate, not a credential; override in
+# .env for a different area. Default is Connaught Place, New Delhi.
+ADAPTER_LOCATION_LAT = float(_env("ADAPTER_LOCATION_LAT", "28.6304") or "28.6304")
+ADAPTER_LOCATION_LON = float(_env("ADAPTER_LOCATION_LON", "77.2177") or "77.2177")
+ADAPTER_LOCATION_LABEL = _env("ADAPTER_LOCATION_LABEL", "Connaught Place, New Delhi, Delhi 110001, India")

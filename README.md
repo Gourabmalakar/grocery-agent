@@ -63,10 +63,31 @@ Load-bearing summary for anyone (or any agent) working in this repo: [`CLAUDE.md
 - `tests/adversarial/`, `tests/killswitch/` and `tests/sentinel/` — the
   suites every later phase must stay green against before `MODE=live`.
 
+**Phase 2 — real prices, read-only:**
+
+- Checked first whether any Indian grocery platform offers agentic access
+  that's actually read-only with no account: no. BigBasket blocks
+  non-browser traffic outright (Akamai). Swiggy's Instamart MCP and Zepto's
+  official MCP both require OAuth-linking a real personal account for
+  essentially everything, including search — Zepto's is explicitly "not a
+  sandbox," and any order it places is real. Gourab's call: browser adapter
+  now, real MCP integration only after Phase 3 proves out (see
+  `memory/LATEST.md`).
+- `grocery/adapters/blinkit_browser.py` — reads real, live Blinkit prices
+  via a headless browser, logged out. No account, no cart, no order;
+  `build_cart`/`quote`/`place_order` raise unconditionally, even if called
+  with `authorized=True`. Verified live against the real site. Demo it
+  yourself: `python -m grocery.adapters.blinkit_browser "atta 5kg"`.
+- `tests/adapters/` — Suite B, the adapter conformance contract (mock-based,
+  runs every time) plus a live-network smoke test for the Blinkit adapter,
+  opt-in via `RUN_LIVE_ADAPTER_TESTS=1` so the default `pytest` run stays
+  network-free like every other suite here.
+
 **Not yet built:** WebAuthn passkeys + Tailscale (deferred until Gourab sets
 up Tailscale — passphrase auth covers the same approvals in the meantime;
-see `SETUP-WEBAUTHN.md`), the scheduled heartbeat for sentinel sweeps, real
-browser adapters (Phase 2), UPI handoff (Phase 3), and the capped wallet
+see `SETUP-WEBAUTHN.md`), the scheduled heartbeat for sentinel sweeps,
+Zepto/BigBasket browser adapters, wiring a real adapter into the actual
+order flow (still mock-only), UPI handoff (Phase 3), and the capped wallet
 rail + `MODE=live` (Phase 4).
 
 **`MODE=dry_run` by default. Nothing in this repo can touch real money or a
@@ -77,6 +98,7 @@ real merchant yet.**
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
+./.venv/bin/playwright install chromium   # only needed for the Phase 2 real-site adapters
 cp .env.example .env   # edit if you want non-default caps
 ```
 
@@ -108,11 +130,14 @@ grocery.sentinel.report`) runs a full transaction-sentinel sweep on demand.
 ./.venv/bin/python -m pytest
 ```
 
-93 tests, no live server, no real site, no network — `tests/e2e/` spins up
-mockstore and the console as real (but isolated, ephemeral) processes on
-test-only ports, so even the two-process integration tests are fully
+98 tests, no live server, no real site, no network by default (2 more are
+skipped unless `RUN_LIVE_ADAPTER_TESTS=1` — they hit the real Blinkit site,
+see Phase 2 above). `tests/e2e/` spins up mockstore and the console as real
+(but isolated, ephemeral) processes on test-only ports, so even the
+two-process integration tests are fully
 self-contained.
 
 See `.claude/plans/00-build-plan.md`'s test plan (suites A–I) for what each
-suite is meant to prove — `tests/adversarial/`, `tests/killswitch/` and
-`tests/sentinel/` are the ones that gate every later phase.
+suite is meant to prove — `tests/adversarial/`, `tests/killswitch/`,
+`tests/sentinel/` and `tests/adapters/` are the ones that gate every later
+phase.

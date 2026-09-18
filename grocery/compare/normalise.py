@@ -14,7 +14,8 @@ import re
 from dataclasses import dataclass
 
 _MASS_TO_GRAMS = {"g": 1, "gm": 1, "gram": 1, "grams": 1, "kg": 1000, "kilogram": 1000, "kilograms": 1000}
-_VOLUME_TO_ML = {"ml": 1, "millilitre": 1, "millilitres": 1, "l": 1000, "litre": 1000, "litres": 1000}
+_VOLUME_TO_ML = {"ml": 1, "millilitre": 1, "millilitres": 1, "l": 1000, "litre": 1000, "litres": 1000,
+                  "ltr": 1000}  # Blinkit's real product cards say "1 ltr", not "1 l" — same "gm" lesson as mass
 _COUNT_UNITS = {"count", "unit", "units", "pcs", "piece", "pieces"}
 
 
