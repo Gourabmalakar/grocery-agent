@@ -63,32 +63,40 @@ Load-bearing summary for anyone (or any agent) working in this repo: [`CLAUDE.md
 - `tests/adversarial/`, `tests/killswitch/` and `tests/sentinel/` — the
   suites every later phase must stay green against before `MODE=live`.
 
-**Phase 2 — real prices, read-only:**
+**Phase 2 — real prices, read-only (three real merchants):**
 
-- Checked first whether any Indian grocery platform offers agentic access
-  that's actually read-only with no account: no. BigBasket blocks
-  non-browser traffic outright (Akamai). Swiggy's Instamart MCP and Zepto's
-  official MCP both require OAuth-linking a real personal account for
-  essentially everything, including search — Zepto's is explicitly "not a
-  sandbox," and any order it places is real. Gourab's call: browser adapter
-  now, real MCP integration only after Phase 3 proves out (see
-  `memory/LATEST.md`).
-- `grocery/adapters/blinkit_browser.py` — reads real, live Blinkit prices
-  via a headless browser, logged out. No account, no cart, no order;
-  `build_cart`/`quote`/`place_order` raise unconditionally, even if called
-  with `authorized=True`. Verified live against the real site. Demo it
-  yourself: `python -m grocery.adapters.blinkit_browser "atta 5kg"`.
-- `tests/adapters/` — Suite B, the adapter conformance contract (mock-based,
-  runs every time) plus a live-network smoke test for the Blinkit adapter,
-  opt-in via `RUN_LIVE_ADAPTER_TESTS=1` so the default `pytest` run stays
-  network-free like every other suite here.
+- Checked first whether any Indian platform offers agentic access that is
+  actually read-only. Mostly no — but Zepto turned out to publish a real
+  `tools:read` OAuth scope, which changes the answer: a price feed that is
+  read-only *by grant*, not by our promise. Amazon has no API and won a March
+  2026 injunction against a third-party shopping agent; Flipkart's open
+  catalogue is its shippable marketplace, not Minutes; BigBasket blocks
+  non-browser traffic outright (Akamai).
+- `grocery/adapters/blinkit_browser.py` — live Blinkit prices via a headless
+  browser, logged out, located by lat/lon cookies.
+- `grocery/adapters/jiomart_api.py` — live JioMart prices via its **JSON
+  storefront API**, no account, located by a pincode header. Refuses to quote
+  JioMart's national fallback catalogue, which an unserviceable pincode
+  returns as a perfectly healthy-looking HTTP 200.
+- `grocery/adapters/zepto_mcp.py` — live Zepto prices over Zepto's **official
+  MCP**, on a `tools:read` grant, with a positive tool allowlist on top.
+  Connect once: `python -m grocery.adapters.zepto_mcp --connect`.
+- `grocery/mcp/` — a small MCP client on `requests`, deliberately not the
+  official SDK (which would force pydantic/starlette upgrades on the process
+  that holds the money; see CLAUDE.md).
+- `grocery/location.py` — the delivery address, editable from the Control
+  page. It decides which shelves are visible, so it is data rather than
+  configuration.
+- Demo any of them without the console:
+  `python -m grocery.adapters.jiomart_api "atta 5kg"`.
 
-**Not yet built:** WebAuthn passkeys + Tailscale (deferred until Gourab sets
-up Tailscale — passphrase auth covers the same approvals in the meantime;
-see `SETUP-WEBAUTHN.md`), the scheduled heartbeat for sentinel sweeps,
-Zepto/BigBasket browser adapters, wiring a real adapter into the actual
-order flow (still mock-only), UPI handoff (Phase 3), and the capped wallet
-rail + `MODE=live` (Phase 4).
+**Not yet built:** the real adapters are **not wired into the order flow
+yet** — `build_cart → quote → place_order` still runs entirely on
+`mockstore`, so the Console's "Why this store" still shows the three fake
+merchants until the worker refactor lands. Also outstanding: the AI eval
+suite and quality dashboard, WebAuthn passkeys + Tailscale (see
+`SETUP-WEBAUTHN.md`), the scheduled heartbeat for sentinel sweeps, UPI
+handoff (Phase 3), and the capped wallet rail + `MODE=live` (Phase 4).
 
 **`MODE=dry_run` by default. Nothing in this repo can touch real money or a
 real merchant yet.**
@@ -130,9 +138,9 @@ grocery.sentinel.report`) runs a full transaction-sentinel sweep on demand.
 ./.venv/bin/python -m pytest
 ```
 
-98 tests, no live server, no real site, no network by default (2 more are
-skipped unless `RUN_LIVE_ADAPTER_TESTS=1` — they hit the real Blinkit site,
-see Phase 2 above). `tests/e2e/` spins up mockstore and the console as real
+138 tests, no live server, no real site, no network by default (8 more are
+skipped unless `RUN_LIVE_ADAPTER_TESTS=1` — they hit the real Blinkit and
+JioMart, see Phase 2 above). `tests/e2e/` spins up mockstore and the console as real
 (but isolated, ephemeral) processes on test-only ports, so even the
 two-process integration tests are fully
 self-contained.

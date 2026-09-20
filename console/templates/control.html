@@ -28,6 +28,34 @@
 </div>
 
 <div class="card">
+  <div class="row between">
+    <h3 style="margin:0">Delivery address</h3>
+    <span class="badge {{ 'ok' if location.has_coordinates else 'warn' }}">
+      {{ 'All merchants' if location.has_coordinates else 'Pincode only' }}
+    </span>
+  </div>
+  <p class="muted">Where the Butler shops. This decides what is on the shelves and what it costs &mdash; the same search returns twelve Amul products in one pincode and none in another, so it is worth getting right.</p>
+  <div class="stack">
+    <label class="muted" for="loc-pincode">Pincode</label>
+    <input id="loc-pincode" inputmode="numeric" maxlength="6" placeholder="560001" value="{{ location.pincode }}">
+    <label class="muted" for="loc-label">Address label <span style="opacity:.7">(optional)</span></label>
+    <input id="loc-label" placeholder="Home &mdash; Indiranagar, Bengaluru" value="{{ location.label }}">
+    <div class="row">
+      <div class="stack" style="flex:1">
+        <label class="muted" for="loc-lat">Latitude</label>
+        <input id="loc-lat" inputmode="decimal" placeholder="12.9767" value="{{ location.lat if location.lat is not none else '' }}">
+      </div>
+      <div class="stack" style="flex:1">
+        <label class="muted" for="loc-lon">Longitude</label>
+        <input id="loc-lon" inputmode="decimal" placeholder="77.5993" value="{{ location.lon if location.lon is not none else '' }}">
+      </div>
+    </div>
+    <p class="muted" style="margin:0">Blinkit and Zepto locate you by coordinates rather than pincode. Leave these blank and they are left out of the comparison and told to you &mdash; rather than shopping a guessed-at neighbourhood and quoting you prices from it.</p>
+    <button class="primary" id="loc-save" onclick="saveLocation()">Save address</button>
+  </div>
+</div>
+
+<div class="card">
   <h3>Budget</h3>
   <p class="muted" style="margin:0">Today <b>₹{{ '%.0f'|format(spend_today) }}</b> of ₹{{ cap_today }} · This month <b>₹{{ '%.0f'|format(spend_month) }}</b> of ₹{{ cap_month }}</p>
   <p class="muted" style="margin:4px 0 0">Mode: <span class="badge {{ 'warn' if mode != 'live' else 'danger' }}">{{ 'test — no real orders' if mode != 'live' else 'LIVE' }}</span></p>
@@ -90,6 +118,21 @@ async function runSweep() {
       (data.findings_count ? ` — ${data.findings.map(f => f.severity).join(', ')}` : ' — all clear') + `</p>`;
     toast(data.tripped_panic ? 'Fatal finding — PANIC engaged' : 'Check complete', data.tripped_panic ? 'danger' : 'ok');
     if (data.tripped_panic) setTimeout(() => location.reload(), 800);
+  });
+}
+async function saveLocation() {
+  const body = new URLSearchParams({
+    pincode: document.getElementById('loc-pincode').value.trim(),
+    label: document.getElementById('loc-label').value.trim(),
+    lat: document.getElementById('loc-lat').value.trim(),
+    lon: document.getElementById('loc-lon').value.trim(),
+  });
+  await withLoading(document.getElementById('loc-save'), ' Saving…', async () => {
+    const r = await fetch('/console/location', {method:'POST', body,
+      headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    if (!r.ok) { toast(friendlyError(await r.json().catch(()=>({}))), 'danger'); return; }
+    toast('Delivering to ' + (await r.json()).pincode, 'ok');
+    setTimeout(()=>location.reload(), 600);
   });
 }
 </script>

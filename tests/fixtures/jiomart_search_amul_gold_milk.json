@@ -1,0 +1,691 @@
+{
+  "items": [
+    {
+      "name": "Amul Gold Homogenised Standardised Milk 1 L",
+      "uid": 7528514,
+      "sku_code": "490001545",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 82,
+          "max": 82
+        },
+        "marked": {
+          "min": 83,
+          "max": 83
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 1,
+      "net-quantity-unit": "L",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 10416,
+          "name": "Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-gold-homogenised-standardised-milk-1-l-mffn3q-7528514"
+    },
+    {
+      "name": "Amul Taaza Homogenised Toned Milk 1 L",
+      "uid": 7521391,
+      "sku_code": "490010311",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 76,
+          "max": 76
+        },
+        "marked": {
+          "min": 77,
+          "max": 77
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 1,
+      "net-quantity-unit": "L",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 10416,
+          "name": "Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-taaza-homogenised-toned-milk-1-l-mffn0b-7521391"
+    },
+    {
+      "name": "Amul Creamy & Tasty Curd 900 g",
+      "uid": 7547445,
+      "sku_code": "494502734",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 52,
+          "max": 52
+        },
+        "marked": {
+          "min": 54,
+          "max": 54
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 900,
+      "net-quantity-unit": "g",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 2781,
+          "name": "Curd",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "curd"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-dahi-creamy-tasty-fresh-yogurt-1-kg-mffncm-7547445"
+    },
+    {
+      "name": "Amul Slim N Trim Skimmed Milk 1 L",
+      "uid": 7516291,
+      "sku_code": "490001542",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 84,
+          "max": 84
+        },
+        "marked": {
+          "min": 85,
+          "max": 85
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 1,
+      "net-quantity-unit": "L",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 10416,
+          "name": "Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-slim-n-trim-skimmed-milk-1-l-mffmxz-7516291"
+    },
+    {
+      "name": "Amul Taaza Homogenised Toned Milk 500 ml",
+      "uid": 7510110,
+      "sku_code": "491022104",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 38,
+          "max": 38
+        },
+        "marked": {
+          "min": 40,
+          "max": 40
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 500,
+      "net-quantity-unit": "ml",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 10416,
+          "name": "Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-taaza-homogenised-toned-milk-500-ml-mffmv3-7510110"
+    },
+    {
+      "name": "Delicious Fat Spread 500 g (Carton)",
+      "uid": 7504992,
+      "sku_code": "490010287",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 111,
+          "max": 111
+        },
+        "marked": {
+          "min": 117,
+          "max": 117
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 500,
+      "net-quantity-unit": "g",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 2771,
+          "name": "Butter & Margarine",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "butter-margarine"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-delicious-fat-spread-500-g-carton-mffmso-7504992"
+    },
+    {
+      "name": "Amul Cow Ghee 500 ml (Pouch)",
+      "uid": 7505635,
+      "sku_code": "490011305",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 332,
+          "max": 332
+        },
+        "marked": {
+          "min": 350,
+          "max": 350
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 500,
+      "net-quantity-unit": "ml",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 12359,
+          "name": "Ghee",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "ghee-l3"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-cow-ghee-500-ml-pouch-mffmsy-7505635"
+    },
+    {
+      "name": "Amul Mithai Mate Sweetened Condensed Milk 400 g (Tin)",
+      "uid": 7545582,
+      "sku_code": "490001538",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 129,
+          "max": 129
+        },
+        "marked": {
+          "min": 130,
+          "max": 130
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 400,
+      "net-quantity-unit": "g",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 2778,
+          "name": "Condensed Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "condensed-milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-mithai-mate-sweetened-condensed-milk-400-g-tin-mffnbh-7545582"
+    },
+    {
+      "name": "Amul Pure Ghee 500 ml (Pouch)",
+      "uid": 7501897,
+      "sku_code": "490001520",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 318,
+          "max": 318
+        },
+        "marked": {
+          "min": 335,
+          "max": 335
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 500,
+      "net-quantity-unit": "ml",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 12359,
+          "name": "Ghee",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "ghee-l3"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-pure-ghee-500-ml-pouch-mffmr9-7501897"
+    },
+    {
+      "name": "Amul Processed Cheddar Cheese Cubes 200 g",
+      "uid": 7512462,
+      "sku_code": "490001402",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 130,
+          "max": 130
+        },
+        "marked": {
+          "min": 135,
+          "max": 135
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 200,
+      "net-quantity-unit": "g",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 12279,
+          "name": "Cheese",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "cheese-l3"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-processed-cheddar-cheese-cubes-200-g-mffmw5-7512462"
+    },
+    {
+      "name": "Amul Masti Spiced Buttermilk 200 ml (Tetra Pak)",
+      "uid": 7530302,
+      "sku_code": "490001780",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 15,
+          "max": 15
+        },
+        "marked": {
+          "min": 15,
+          "max": 15
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 200,
+      "net-quantity-unit": "ml",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 2774,
+          "name": "Buttermilk and Lassi",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "buttermilk-and-lassi"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-masti-spiced-buttermilk-200-ml-tetra-pak-mffn4i-7530302"
+    },
+    {
+      "name": "Amul Lactose Free Milk 250 ml",
+      "uid": 7536780,
+      "sku_code": "491249385",
+      "brand": {
+        "type": "brand",
+        "uid": 245,
+        "name": "amul",
+        "action": {
+          "page": {
+            "type": "products",
+            "query": {
+              "brand": [
+                ""
+              ]
+            }
+          },
+          "type": "page"
+        },
+        "_custom_json": {}
+      },
+      "price": {
+        "effective": {
+          "min": 25,
+          "max": 25
+        },
+        "marked": {
+          "min": 26,
+          "max": 26
+        },
+        "currency_code": "INR",
+        "currency_symbol": "₹"
+      },
+      "sellable": true,
+      "net-quantity-value": 250,
+      "net-quantity-unit": "ml",
+      "categories": [
+        {
+          "type": "category",
+          "uid": 10416,
+          "name": "Milk",
+          "action": {
+            "page": {
+              "type": "products",
+              "query": {
+                "category": [
+                  "milk"
+                ]
+              }
+            },
+            "type": "page"
+          },
+          "_custom_json": {}
+        }
+      ],
+      "slug": "amul-lactose-free-milk-250-ml-mffn7f-7536780"
+    }
+  ],
+  "page": {
+    "item_total": 39
+  }
+}

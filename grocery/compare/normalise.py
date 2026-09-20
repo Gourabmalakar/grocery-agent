@@ -91,3 +91,46 @@ def normalise(pack_qty: float, pack_unit: str, price_inr: float) -> NormalisedPr
         base_kind=base_kind, base_quantity=total_base,
         price_per_base_unit=per_base, price_per_100_base=per_base * 100,
     )
+
+
+# Units we can actually normalise, spelled the way product titles spell them.
+# Built from the tables above so the two can never drift apart: a unit that
+# parse_pack_size() accepts is by construction one _parse_unit() understands.
+_TITLE_UNITS = sorted(
+    set(_MASS_TO_GRAMS) | set(_VOLUME_TO_ML) | set(_COUNT_UNITS),
+    key=len, reverse=True,   # longest-first so "kg" wins over "g"
+)
+_PACK_SIZE_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(" + "|".join(_TITLE_UNITS) + r")\b", re.IGNORECASE
+)
+
+
+def parse_pack_size(text: str) -> tuple[float, str] | None:
+    """Extract a PACK SIZE from a product title: "Amul Gold Homogenised
+    Standardised Milk 1 L" -> (1.0, "l"), "Amul Taaza Toned Milk 500 ml" ->
+    (500.0, "ml").
+
+    NOT the same job as parse_quantity_phrase(), and conflating them is a
+    real bug rather than a style choice. That function reads what a HUMAN
+    ASKED FOR ("30 eggs", "2 kg atta"): it anchors on a LEADING number and
+    returns a base kind like "volume_ml". This one reads what a MERCHANT IS
+    SELLING, where the size sits at the END of a sentence of marketing, and
+    must return a pack unit ("ml") because that is what normalise() expects.
+    Feeding "volume_ml" back into normalise() yields base_kind="unknown",
+    which silently drops the listing out of cross-merchant comparison — it
+    does not raise, it just stops being comparable. Caught by
+    tests/adapters/test_jiomart_mapping.py.
+
+    Takes the LAST match, because titles trail their size ("... Milk 1 L")
+    while any earlier number is usually part of a brand or a variant name.
+
+    Known limitation, deliberately not guessed at: a multipack ("1 L, Pack of
+    2") returns the unit size, not the total. Adapters that can read a
+    declared pack count should prefer it — see jiomart_api._pack_of, which
+    uses JioMart's own net-quantity fields first and only falls back here.
+    """
+    matches = _PACK_SIZE_RE.findall(text or "")
+    if not matches:
+        return None
+    amount, unit = matches[-1]
+    return float(amount), unit.lower()

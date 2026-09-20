@@ -83,29 +83,83 @@ mockstore/  three fake merchants. Phase 0-1's entire storefront — real
             against — real adapters below are read-only so far.
 ```
 
-### Real merchant adapters (Phase 2 — read-only)
+### Real merchant adapters (read-only)
 
-`grocery/adapters/blinkit_browser.py` reads real Blinkit prices via a
-headless browser, logged out — no account, no cart, no order. Confirmed
-live: neither Blinkit nor BigBasket has an official read-only price API
-(BigBasket blocks non-browser traffic outright — Akamai `Access Denied`,
-which this repo will not try to get past); Swiggy's Instamart MCP and
-Zepto's official MCP both require linking a real user account for
-essentially everything, including search, so neither fits "read-only, no
-account" either. `search()`/`get_item()` parse real page structure and
-stable anchor text rather than CSS class names (Tailwind utility classes,
-which drift with any redesign) — see the module docstring for the exact
-anchors and why each was chosen. `build_cart()`/`quote()`/`place_order()`
-raise `NotImplementedError` unconditionally, including when `authorized=True`
-— this adapter must never be trusted to gate a write, because nothing has
-ever wired it to anything that could check that flag for real.
+Three real merchants, three different doors. All read-only: every one's
+`build_cart()`/`quote()`/`place_order()` raises `NotImplementedError`
+unconditionally, **including when `authorized=True`**, because nothing has
+ever wired them to something that could check that flag for real.
 
-Run `python -m grocery.adapters.blinkit_browser "atta 5kg"` for a live demo
-that touches nothing else in the system. `tests/adapters/test_adapter_
-contract.py` is Suite B (mock-based, always runs); `tests/adapters/
-test_blinkit_browser_live.py` hits the real site and is skipped unless
-`RUN_LIVE_ADAPTER_TESTS=1` — real-site tests don't belong in the default,
-network-free `pytest` run.
+| Adapter | Door | Gate |
+|---|---|---|
+| `blinkit_browser.py` | headless browser | lat/lon cookies, no account |
+| `jiomart_api.py` | **JSON API** (Fynd storefront) | `x-location-detail` pincode header, no account |
+| `zepto_mcp.py` | **Zepto's official MCP** | OAuth, scope `tools:read` |
+
+`jiomart_api.py` is an API adapter, not a browser one, and the filename says
+so — jiomart.com is a Fynd storefront, so its catalogue comes as JSON with
+declared `net-quantity-*` fields. Where a JSON API exists, use it: no
+Chromium to launch, no class names to parse, nothing to drift under a
+redesign.
+
+**The single most dangerous behaviour found so far: JioMart answers an
+unserviceable pincode with HTTP 200 and a full page of products** — its
+national marketplace catalogue rather than local quick-commerce stock. 560001
+returns `item_total` 329 with `seller_id` 1; 999999 and 110001 return 63 with
+third-party sellers only. Both look healthy. `_assert_serviceable()` refuses
+the second rather than quoting nationally-shipped goods against Blinkit's
+10-minute delivery — which would have been wrong while carrying a real
+`price_source`, a real `asof`, and passing every mechanical check here.
+
+**`grocery/mcp/` is a small MCP client written directly on `requests`**, not
+the official SDK. `pip install mcp` resolves pydantic to 2.13.5 and starlette
+to 1.6.0 against this repo's pinned `pydantic==2.10.3` / `fastapi==0.115.6`
+— 17 new packages and a forced upgrade of the process that holds the money,
+to gain three JSON-RPC methods. Don't take that trade without re-measuring it.
+
+#### Zepto, and the rule about it
+
+Zepto's MCP answers price queries and **places real orders over the same
+session** — its README: *"not a sandbox or demo environment."* Four
+independent things stop this repo reaching the write tools:
+
+1. **The grant.** We request `scope=tools:read` and nothing else, and
+   `grocery/mcp/oauth.py` refuses to persist a token that comes back with
+   more. Zepto's own authorization server enforces it, not our code. This is
+   the one that actually matters.
+2. **The allowlist.** `_call()` refuses any tool outside `_ALLOWED_TOOLS`
+   before dispatch — positive, so a tool added next month is refused by
+   default.
+3. **The contract.** Write methods raise unconditionally.
+4. **The process boundary.** The token lives on the Console's side; the
+   worker never holds a credential (rule 1).
+
+> **Never `claude mcp add` the Zepto server.** Zepto whitelists
+> `claude://claude.ai/settings/connectors` as a redirect URI, so adding it to
+> a Claude client is a two-command temptation. Doing so hands order-placing
+> authority to any Claude session — exactly the failure this repo exists to
+> make impossible. It belongs in the adapter, behind the grant and the
+> allowlist, or nowhere.
+
+Connect once, by hand: `python -m grocery.adapters.zepto_mcp --connect`.
+Inspect the surface any time with `--tools`; pin the response schema with
+`--probe <query>` (Zepto publishes none, so the mapper raises with the keys
+it actually saw rather than inventing a price).
+
+### The delivery address
+
+`grocery/location.py` holds it — one place, read by every adapter, edited
+from the Control page, stored under `DATA`, audit-logged when it changes.
+**It is data, not configuration**: the `.env` values are first-run defaults
+only. A wrong address is not cosmetic; it silently decides what can be bought
+and at what price.
+
+Coordinates are optional and their absence is **disclosed, not guessed**. A
+pincode does not imply a lat/lon, so rather than derive a plausible-looking
+one and hand it to Blinkit — which would quietly shop the wrong neighbourhood
+at convincing prices — an adapter that needs coordinates it does not have
+reports itself unavailable and the comparison says so. Same rule as an
+unsourced price.
 
 ## Mode gate
 

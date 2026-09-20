@@ -68,6 +68,19 @@ PAUSE_FILE = ROOT / "console" / "PAUSE"
 # like Blinkit gate their catalogue behind a delivery location rather than a
 # login. This is a real public coordinate, not a credential; override in
 # .env for a different area. Default is Connaught Place, New Delhi.
-ADAPTER_LOCATION_LAT = float(_env("ADAPTER_LOCATION_LAT", "28.6304") or "28.6304")
-ADAPTER_LOCATION_LON = float(_env("ADAPTER_LOCATION_LON", "77.2177") or "77.2177")
-ADAPTER_LOCATION_LABEL = _env("ADAPTER_LOCATION_LABEL", "Connaught Place, New Delhi, Delhi 110001, India")
+# FIRST-RUN DEFAULTS ONLY. The delivery address in force is grocery/location.py's
+# current(), which the Console edits and stores under DATA — these values seed it
+# and are otherwise unused. Do not read them directly from an adapter.
+#
+# Default is Bengaluru 560001, chosen because it is VERIFIED serviceable: JioMart
+# returns twelve Amul products there and zero at the previous 110001 default,
+# where quick commerce does not reach. A default that returns an empty catalogue
+# looks identical to a broken adapter, which is the worst kind of wrong.
+ADAPTER_LOCATION_LAT = float(_env("ADAPTER_LOCATION_LAT", "12.9767") or "12.9767")
+ADAPTER_LOCATION_LON = float(_env("ADAPTER_LOCATION_LON", "77.5993") or "77.5993")
+ADAPTER_LOCATION_LABEL = _env("ADAPTER_LOCATION_LABEL", "Bengaluru GPO, Bengaluru, Karnataka 560001, India")
+# JioMart gates its catalogue on a pincode rather than coordinates (a header,
+# not a login — see grocery/adapters/jiomart_api.py). Kept consistent with the
+# lat/lon above: 110001 is Connaught Place. Also a public postcode, not a secret.
+ADAPTER_LOCATION_PINCODE = _env("ADAPTER_LOCATION_PINCODE", "560001")
+

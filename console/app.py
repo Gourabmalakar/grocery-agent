@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from grocery import config, killswitch, narrator
+from grocery import config, killswitch, location, narrator
 from grocery.audit import log as audit_log
 from grocery.audit import decisions as decision_log
 from grocery.audit import verify as audit_verify
@@ -147,6 +147,7 @@ def control_page(request: Request):
         "dead_mans_switch_tripped": sentinel_report.dead_mans_switch_tripped(),
         "spend_today": ledger_store.spend_today(), "cap_today": config.CAP_PER_DAY_INR,
         "spend_month": ledger_store.spend_this_month(), "cap_month": config.CAP_PER_MONTH_INR,
+        "location": location.current(),
     })
 
 
@@ -159,6 +160,50 @@ def console_sentinel_sweep(request: Request):
     fatal one, trip PANIC — the same authority the sentinel always has."""
     _require_session(request)
     return sentinel_report.sweep()
+
+
+@app.post("/console/location")
+def console_set_location(
+    request: Request,
+    pincode: str = Form(...),
+    lat: str = Form(""),
+    lon: str = Form(""),
+    label: str = Form(""),
+):
+    """Set the delivery address. Session-gated: where the groceries go is a
+    decision for the person who pays, not for the agent — worker/tools.py has
+    no route to this, by omission and on purpose.
+
+    Audit-logged because it materially changes what can be bought and at what
+    price: measured on JioMart, 560001 returns twelve Amul products and 110001
+    returns none. An address change that left no trace would make a later
+    price look inexplicable.
+    """
+    _require_session(request)
+    try:
+        here = location.set_location(
+            pincode=pincode,
+            lat=float(lat) if lat.strip() else None,
+            lon=float(lon) if lon.strip() else None,
+            label=label,
+        )
+    except location.InvalidLocation as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="latitude and longitude must be numbers") from exc
+    audit_log.append("location.changed", here.to_json())
+    return here.to_json()
+
+
+@app.get("/console/location")
+def console_get_location(request: Request):
+    _require_session(request)
+    here = location.current()
+    return {
+        **here.to_json(),
+        "merchants": {m: {"serviceable": here.supports(m), "why_not": here.missing_for(m)}
+                      for m in ("blinkit", "jiomart", "zepto")},
+    }
 
 
 # --------------------------------------------------------------- health ----

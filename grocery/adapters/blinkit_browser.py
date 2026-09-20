@@ -35,7 +35,7 @@ import re
 import time
 from urllib.parse import quote
 
-from grocery import config
+from grocery import config, location
 from grocery.adapters.base import CartLine, Listing, Quote, StorefrontAdapter
 
 MERCHANT_ID = "blinkit"
@@ -45,6 +45,12 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 
+class AdapterUnavailable(Exception):
+    """This adapter cannot run right now for a reason that is not the site's
+    fault — usually a delivery address that lacks what it needs. Callers
+    leave the merchant out of the comparison and SAY SO."""
+
+
 class AdapterBlocked(Exception):
     """Raised when the site shows a bot-detection page or CAPTCHA instead of
     real content. The correct response is to stop and say so — never to try
@@ -52,10 +58,16 @@ class AdapterBlocked(Exception):
 
 
 def _location_cookies() -> list[dict]:
+    """Blinkit needs coordinates. If the delivery address on file has none,
+    we stop rather than fall back to a default point — shopping a different
+    neighbourhood at plausible-looking prices is worse than not shopping."""
+    here = location.current()
+    if not here.has_coordinates:
+        raise AdapterUnavailable(here.missing_for(MERCHANT_ID))
     return [
-        {"name": "gr_1_lat", "value": str(config.ADAPTER_LOCATION_LAT), "domain": "blinkit.com", "path": "/"},
-        {"name": "gr_1_lon", "value": str(config.ADAPTER_LOCATION_LON), "domain": "blinkit.com", "path": "/"},
-        {"name": "gr_1_locality", "value": config.ADAPTER_LOCATION_LABEL, "domain": "blinkit.com", "path": "/"},
+        {"name": "gr_1_lat", "value": str(here.lat), "domain": "blinkit.com", "path": "/"},
+        {"name": "gr_1_lon", "value": str(here.lon), "domain": "blinkit.com", "path": "/"},
+        {"name": "gr_1_locality", "value": here.label or here.pincode, "domain": "blinkit.com", "path": "/"},
     ]
 
 
