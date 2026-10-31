@@ -25,12 +25,17 @@ def test_defaults_to_config_when_nothing_is_set(isolated_data_dir):
     assert here.updated_at == 0.0  # never explicitly chosen by a human
 
 
-def test_round_trips_a_saved_location(isolated_data_dir):
+def test_round_trips_a_saved_location_with_the_coordinate_coarsened(isolated_data_dir):
+    """Pincode and label round-trip exactly; the COORDINATE DELIBERATELY DOES
+    NOT. It is rounded to ~1.1 km on the way in so a precise point never reaches
+    disk — see grocery/location.py's header. This test used to assert the precise
+    value came back, which is the behaviour that was traded away on purpose."""
     from grocery import location
 
     location.set_location(pincode="560001", lat=12.9767, lon=77.5993, label="Home")
     here = location.current()
-    assert (here.pincode, here.lat, here.lon, here.label) == ("560001", 12.9767, 77.5993, "Home")
+    assert (here.pincode, here.label) == ("560001", "Home")
+    assert (here.lat, here.lon) == (12.98, 77.6)
     assert here.updated_at > 0
 
 

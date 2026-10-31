@@ -16,10 +16,19 @@ the Zepto MCP will be processed as a real Zepto order." The same server that
 answers a price query also exposes cart and order-placement tools. Four
 independent things stop us reaching them:
 
-  1. THE GRANT. We request scope "tools:read" and nothing else, and
-     grocery/mcp/oauth.py refuses to persist a token that comes back with
-     more. The merchant's own authorization server, not our code, is what
-     makes a write impossible. This is the one that actually matters.
+  1. THE GRANT — AND IT DOES NOT HOLD. This said "the merchant's own
+     authorization server, not our code, is what makes a write impossible.
+     This is the one that actually matters." Measured on 2026-09-27, it is
+     false. We do request scope "tools:read" and nothing else, and
+     grocery/mcp/oauth.py does refuse to persist anything broader — the
+     issued token carries exactly `"scope": "tools:read"`. But tools/list
+     against that token still offers update_cart, create_order,
+     create_wallet_order, create_upi_reserve_pay_order and
+     create_online_payment_order. Zepto's authorization server records the
+     scope; its MCP server does not appear to enforce it on the tool surface.
+     So the grant is evidence of intent, not a barrier, and defence 2 below
+     is load-bearing here exactly as it is for Swiggy. Run `--tools` to see
+     the live surface; it prints a warning when write tools are on offer.
   2. THE ALLOWLIST. _call() refuses any tool name outside _ALLOWED_TOOLS
      before dispatch — a positive allowlist, so a tool Zepto adds next month
      is refused by default rather than reachable by default.
@@ -65,12 +74,45 @@ PRICE_SOURCE = "zepto_mcp"
 # Positive allowlist. Names are confirmed against a live tools/list during
 # `--connect`; assert_surface_is_read_only() reports any drift rather than
 # letting a renamed tool fail silently as "no results".
-_ALLOWED_TOOLS = frozenset({"search_products", "search", "order_history"})
+# update_user_name is DELIBERATELY ABSENT, and was briefly present. It PATCHes
+# a Zepto profile, so it is a write by any honest reading, and keeping it meant
+# carrying a named exception through the write guard below. Two things made
+# removing it strictly better than excusing it. Zepto's own tool contract says
+# the name "must be asked for — never generate it yourself", which is not a
+# thing an unattended worker can do. And completing registration from here does
+# not work anyway: see _ensure_registered. So registration is a human action in
+# Zepto's app, this adapter has no exceptions to its write guard at all, and
+# tests/adversarial/test_zepto_write_tools_refused.py can assert that absolutely.
+_ALLOWED_TOOLS = frozenset({
+    "search_products", "search",
+    "get_user_details",
+    "list_saved_addresses", "select_saved_address",
+})
 
-# Belt to the allowlist's braces: even a mis-typed entry above can never be
-# a write, because anything whose name reads like one is refused outright.
-_WRITE_SHAPED = ("cart", "order_place", "place_order", "checkout", "pay",
-                 "add_", "update_", "remove_", "delete_", "create_")
+# Belt to the allowlist's braces: even a mis-typed entry above can never be a
+# write, because anything whose name reads like one is refused outright.
+#
+# WIDENED 2026-09-27 AFTER READING THE REAL SURFACE, and the reason is worth
+# keeping. The first pattern set was written from Zepto's README and matched
+# "create_order" literally. A live tools/list under a tools:read grant actually
+# offers create_wallet_order, create_upi_reserve_pay_order,
+# create_online_payment_order, update_cart, add_saved_address, update_drop_zone
+# and select_store — and the old patterns caught only two of them. The positive
+# allowlist still refused every one, so nothing was ever reachable; but the belt
+# was reporting "read only" over a surface that can spend money, which is the
+# kind of quiet wrongness that survives until it matters.
+#
+# These deliberately over-match: get_order_detail, list_order_history and
+# get_past_order_items are reads, and are flagged anyway. Refusing a read by
+# accident costs a listing. Permitting a write by accident costs an order.
+_WRITE_SHAPED = ("cart", "checkout", "pay", "_order", "order_", "add_",
+                 "update_", "remove_", "delete_", "clear_", "apply_",
+                 "place_", "select_store", "zepto_shop")
+
+
+def _is_write_shaped(tool: str) -> bool:
+    """No exceptions, by design — see the note on _ALLOWED_TOOLS."""
+    return any(marker in tool for marker in _WRITE_SHAPED)
 
 
 class ZeptoNotConnected(RuntimeError):
@@ -80,6 +122,13 @@ class ZeptoNotConnected(RuntimeError):
 
 class WriteToolRefused(PermissionError):
     """Something tried to call a tool that could change state at Zepto."""
+
+
+class ZeptoRegistrationIncomplete(RuntimeError):
+    """Zepto's MCP will not answer a shopping tool for this account yet. The
+    fix is always a human action in Zepto's own app — never a retry, and never
+    treating it as "no results", which is indistinguishable from an empty
+    shelf."""
 
 
 class ZeptoSchemaUnknown(RuntimeError):
@@ -145,6 +194,10 @@ class ZeptoMCPAdapter(StorefrontAdapter):
 
     def __init__(self) -> None:
         self._client: McpClient | None = None
+        self._registered: bool = False
+        # Sticky: once the gate has refused us, every later search fails fast
+        # from memory instead of asking Zepto the same question per query.
+        self._registration_error: ZeptoRegistrationIncomplete | None = None
 
     def _connected_client(self) -> McpClient:
         if self._client is None:
@@ -158,7 +211,7 @@ class ZeptoMCPAdapter(StorefrontAdapter):
         return self._client
 
     def _call(self, tool: str, arguments: dict[str, Any]) -> Any:
-        if tool not in _ALLOWED_TOOLS or any(marker in tool for marker in _WRITE_SHAPED):
+        if tool not in _ALLOWED_TOOLS or _is_write_shaped(tool):
             raise WriteToolRefused(
                 f"tool {tool!r} is not on this adapter's read-only allowlist "
                 f"({sorted(_ALLOWED_TOOLS)}). This adapter never calls a tool that "
@@ -183,7 +236,7 @@ class ZeptoMCPAdapter(StorefrontAdapter):
         not a curiosity — it is reported, and the caller decides.
         """
         offered = [t.get("name", "") for t in self.available_tools()]
-        writes = [n for n in offered if any(m in n for m in _WRITE_SHAPED)]
+        writes = [n for n in offered if _is_write_shaped(n)]
         return {
             "offered": offered,
             "allowed": sorted(_ALLOWED_TOOLS),
@@ -201,7 +254,100 @@ class ZeptoMCPAdapter(StorefrontAdapter):
             f"no known search tool on the Zepto MCP; it offers {sorted(offered)}"
         )
 
+    def _ensure_registered(self) -> None:
+        """Complete Zepto's one-time profile + address gate, once per process.
+
+        VERIFIED BY HAND, 2026-09-27 — THIS GATE CANNOT CURRENTLY BE CLEARED
+        FROM THE CLIENT SIDE ON THIS ACCOUNT, and the code below is written to
+        say so rather than to keep trying. What was actually observed, on a
+        freshly initialised session and a freshly refreshed token:
+
+            get_user_details      -> "Name: Gourab Malakar  Registered: Yes"
+            update_user_name      -> "Registration complete! Welcome to Zepto"
+            list_saved_addresses  -> "Registration required. Please call
+                                      get_user_details first, then
+                                      update_user_name ..."
+            search_products       -> same
+            get_past_order_items / list_order_history /
+            get_location_serviceability / view_cart -> same
+
+        So the server contradicts itself: the profile tool reports the account
+        registered while every shopping tool reports it is not. Ruled out, each
+        by experiment rather than by argument: call ordering inside one session,
+        a brand-new MCP session, a brand-new access token minted by refresh, a
+        cookie-preserving HTTP session (the server sets no cookie), and a
+        different clientInfo name. Zepto's own tracker carries the identical
+        contradiction on a different account as issue zeptonow/mcp#33, open
+        since 2026-08-02 and unanswered.
+
+        Two consequences are deliberate. It RAISES rather than returning no
+        listings — an empty result would look exactly like an item being out of
+        stock, which is the reporting defect that same issue is about. And it
+        remembers the refusal, so an order for six items asks Zepto once, not
+        six times.
+        """
+        if self._registered:
+            return
+        if self._registration_error is not None:
+            raise self._registration_error
+        try:
+            self._register_and_select_address()
+        except ZeptoRegistrationIncomplete as exc:
+            self._registration_error = exc
+            raise
+        except McpError as exc:
+            self._registration_error = _gate_failure(exc)
+            raise self._registration_error from exc
+        self._registered = True
+
+    def _register_and_select_address(self) -> None:
+        """The sequence update_user_name's own description makes mandatory:
+        get_user_details, then (only if unregistered) update_user_name, then
+        list_saved_addresses, then select_saved_address before any shopping."""
+        details = self._call("get_user_details", {})
+        if isinstance(details, str) and "Registered: No" in details:
+            raise ZeptoRegistrationIncomplete(
+                "This Zepto account has not finished registration. Completing it "
+                "needs update_user_name, which this adapter deliberately cannot call "
+                "— it writes to a profile, and Zepto's own contract says the name must "
+                "be asked for and never generated. Finish the profile in the Zepto app "
+                "or on zeptonow.com, then re-run --connect."
+            )
+
+        addresses = self._call("list_saved_addresses", {})
+        addr_id = config.ZEPTO_ADDRESS_ID or _sole_address_id(addresses)
+        if not addr_id:
+            raise ZeptoRegistrationIncomplete(
+                "Zepto returned no single saved delivery address to shop from "
+                f"(got: {str(addresses)[:200]!r}). Save one in the Zepto app, or set "
+                "ZEPTO_ADDRESS_ID to the one to use. Searching without a delivery "
+                "context would price a neighbourhood nobody chose."
+            )
+        # A BROKEN ACKNOWLEDGEMENT IS NOT A FAILED OPERATION, and on this server
+        # they are different things. select_saved_address opens an SSE stream and
+        # then drops it — `requests` reports "Response ended prematurely" and our
+        # client turns that into "empty response to tools/call". But the store
+        # selection HAS taken effect: measured 2026-10-07, a search_products call
+        # immediately afterwards returns real products where moments earlier it
+        # answered "Store not selected."
+        #
+        # So the ack is treated as inconclusive rather than fatal, and SEARCH IS
+        # THE TEST. If the store genuinely was not selected, the very next search
+        # says so in plain words and the caller reports that instead. Raising on
+        # a dropped ack would make Zepto permanently unusable over a cosmetic
+        # defect in its response handling — which is what it did until now.
+        try:
+            self._call("select_saved_address", {"addressId": addr_id})
+            print(f"[zepto] selected delivery address {addr_id}")
+        except McpError as exc:
+            if "empty response" not in str(exc):
+                raise
+            print(f"[zepto] select_saved_address dropped its response stream "
+                  f"({exc}) — the selection usually lands anyway, so continuing "
+                  f"and letting the first search be the test")
+
     def search(self, query: str) -> list[Listing]:
+        self._ensure_registered()
         payload = self._call(self._search_tool(), {"query": query})
         rows = _rows_of(payload)
         listings = []
@@ -227,6 +373,77 @@ class ZeptoMCPAdapter(StorefrontAdapter):
 
     def place_order(self, cart_ref: str, payment_ref: str, *, authorized: bool) -> str:
         raise NotImplementedError("zepto_mcp is read-only — ordering is Phase 3+ work")
+
+
+# ---- registration helpers ----------------------------------------------
+
+def _address_ids(payload: Any) -> list[str]:
+    """Every address ID in a list_saved_addresses response.
+
+    THE SHAPE IS UNVERIFIED and deliberately admitted as such: the gate above
+    has never once let this tool answer, so there is no real response to pin
+    this against — only the tool's description, which promises "structured
+    address data with IDs". It therefore accepts a list, a wrapped list, or
+    prose, and returns nothing at all rather than half-guessing.
+    """
+    ids: list[str] = []
+    if isinstance(payload, str):
+        import re
+        ids = re.findall(r"(?:addressId|address_id|ID)[\"'\s:]+([a-zA-Z0-9_-]{6,})", payload)
+    elif isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                for key in ("id", "addressId", "address_id"):
+                    if item.get(key):
+                        ids.append(str(item[key]))
+                        break
+    elif isinstance(payload, dict):
+        for key in ("addresses", "savedAddresses", "data", "results", "items"):
+            if isinstance(payload.get(key), list):
+                return _address_ids(payload[key])
+        for key in ("id", "addressId", "address_id"):
+            if payload.get(key):
+                ids.append(str(payload[key]))
+                break
+    return ids
+
+
+def _sole_address_id(payload: Any) -> str | None:
+    """The account's address ID only when there is exactly ONE of them.
+
+    Taking "the first" of several would pick a delivery neighbourhood nobody
+    chose and then price it confidently — the same class of mistake
+    blinkit_browser.py refuses to make when lat/lon are missing. Several
+    addresses means ZEPTO_ADDRESS_ID has to say which.
+    """
+    ids = _address_ids(payload)
+    return ids[0] if len(ids) == 1 else None
+
+
+def _gate_failure(exc: McpError) -> ZeptoRegistrationIncomplete:
+    """Turn Zepto's self-contradicting gate message into something a human can
+    act on. Anything else is passed through with its own text intact."""
+    if "Registration required" not in str(exc):
+        return ZeptoRegistrationIncomplete(f"Zepto refused the setup sequence: {exc}")
+    return ZeptoRegistrationIncomplete(
+        "Zepto's MCP is refusing every shopping tool for this account with "
+        "\"Registration required\", while its own get_user_details reports the "
+        "same account as Registered: Yes. Verified 2026-09-27 that this cannot be "
+        "cleared from the client side: correct call order, a fresh MCP session, a "
+        "freshly refreshed token and a cookie-preserving HTTP session all hit it. "
+        "It is Zepto's bug — zeptonow/mcp#33, open since 2026-08-02.\n"
+        "ALREADY RULED OUT, so do not spend time on them again: completing the "
+        "profile and saving a delivery address in the Zepto app (done 2026-09-27 "
+        "— the gate did not move), and refreshing the access token.\n"
+        "What is left, in order:\n"
+        "  1. A FULL re-authorization: `--connect`. A refresh reuses the same "
+        "grant; only a fresh authorize re-derives the session from an account "
+        "that now has an address. This is the last client-side lever there is.\n"
+        "  2. If it persists, it is Zepto's to fix — comment on zeptonow/mcp#33 "
+        "with this second reproduction, and shop the merchants that answer.\n"
+        "Until then Zepto is left out of the comparison and SAID SO, never "
+        "silently dropped and never reported as an empty shelf."
+    )
 
 
 # ---- response mapping --------------------------------------------------
@@ -262,13 +479,35 @@ def _first(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+# RESOLVED BY PROBE, 2026-10-07 — ZEPTO QUOTES PAISE.
+#
+# This function used to refuse to divide, on the grounds that guessing is how a
+# ₹72 milk becomes ₹0.72, and said the probe should settle it. The probe has now
+# settled it, and the evidence is recorded here so nobody has to guess again:
+#
+#   {"name": "Milky Mist Lactose Free Milk", "price": 3400, "mrp": 4000,
+#    "packSize": "1 pack (250 ml)"}
+#
+# ₹34.00 for 250 ml, with an MRP of ₹40.00 — both plausible, and the ratio is
+# right. Corroborated across merchants on the same day: Zepto quoted 7700 for
+# "Amul Taaza Homogenised Toned Milk 1 L", and Blinkit's live price for the same
+# litre was ₹77.00. Two independent readings agreeing to the paisa is what makes
+# this a measurement rather than a hunch.
+#
+# Why it mattered more than it looks: at 100x, Zepto could never win a
+# comparison, so it would have sat in every basket looking merely expensive and
+# would never have been chosen — a silently wrong merchant rather than a visibly
+# broken one. tests/adapters/test_zepto_mapping.py pins the real row.
+_PAISE_PER_RUPEE = 100
+
+
 def _as_price(value: Any) -> float | None:
-    """Zepto may quote paise as ints. A bare int that looks like paise is
-    NOT silently divided by 100 — that guess is how a ₹72 milk becomes ₹0.72
-    or vice versa. Anything ambiguous is left to the probe to resolve."""
     if isinstance(value, (int, float)):
-        return float(value)
+        return float(value) / _PAISE_PER_RUPEE
     if isinstance(value, str):
+        # A string carrying a ₹ sign is already rupees — only the numeric API
+        # fields are paise. Converting both would be the ₹0.72 bug in the other
+        # direction.
         cleaned = value.replace("₹", "").replace(",", "").strip()
         try:
             return float(cleaned)
@@ -301,9 +540,27 @@ def _listing_from(row: dict[str, Any], *, strict: bool = True) -> Listing | None
         pack_qty, pack_unit = parsed
 
     stock_value = _first(row, _STOCK_KEYS)
+    # THE SKU IS THE COMPOSITE, AND THAT IS WHAT MAKES CARTING POSSIBLE.
+    # Zepto's MCP search returns productVariantId and storeProductId as separate
+    # fields; its UCP cart API addresses a purchasable thing as
+    # "{productVariantId}:{storeProductId}". Verified 2026-10-11 against a live
+    # catalogue: every composite built this way was present in the UCP search
+    # results for the same query.
+    #
+    # Keeping only the first half — which this did — meant an approved line
+    # could not be put in a real basket, and the fallback was searching the
+    # merchant for the product's own title. Those titles are things like
+    # "Coca-Cola PET| Cola Sparkling Soft Drink | The Coca-Cola Company", which
+    # is a product name and a terrible search query; it found nothing and the
+    # cart build failed (order_efaa1edd24a1). Carrying both halves turns that
+    # search into no lookup at all. Same reasoning as swiggy_mcp.py's spinId:skuId.
+    variant_id = str(row.get("productVariantId") or _first(row, _SKU_KEYS) or "")
+    store_product_id = str(row.get("storeProductId") or "")
+    sku = f"{variant_id}:{store_product_id}" if store_product_id else variant_id
+
     return Listing(
         merchant=MERCHANT_ID,
-        sku=str(_first(row, _SKU_KEYS) or ""),
+        sku=sku,
         name=str(name),
         brand=str(_first(row, _BRAND_KEYS) or ""),
         pack_qty=pack_qty,
@@ -360,7 +617,7 @@ def connect_interactively(*, open_browser: bool = True) -> dict[str, Any]:
             pass  # a local callback server should not spam the terminal
 
     server = http.server.HTTPServer(("127.0.0.1", 0), _Callback)
-    redirect_uri = f"http://127.0.0.1:{server.server_port}/callback"
+    redirect_uri = f"http://localhost:{server.server_port}/callback"
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     resource_meta = oauth.discover_resource(MCP_RESOURCE)
@@ -458,7 +715,13 @@ if __name__ == "__main__":
             print(_json.dumps(raw, indent=2)[:3000] if raw is not None else "None")
         raise SystemExit(0)
 
-    results = adapter.search(" ".join(args))
+    try:
+        results = adapter.search(" ".join(args))
+    except (ZeptoRegistrationIncomplete, ZeptoNotConnected) as exc:
+        # A traceback here would bury the one thing the reader needs: what to
+        # do next. The adapter cannot fix either of these itself.
+        print(f"\nzepto is unavailable:\n\n{exc}\n")
+        raise SystemExit(2)
     print(f"{len(results)} listings from {MERCHANT_ID}\n")
     for item in results[:25]:
         stock = "" if item.in_stock else "  (out of stock)"

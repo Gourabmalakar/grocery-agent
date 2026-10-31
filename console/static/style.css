@@ -291,3 +291,13 @@ td, th { padding: 8px; border-bottom: 1px solid var(--card-border); text-align: 
   .navlinks a { padding: 7px 10px; font-size: 0.85em; }
   .step label { display: none; }
 }
+
+/* Each merchant's full basket, collapsed behind its summary row. The winner
+   opens by default; the alternatives are one click away rather than invisible.
+   Gourab, on order_6a45f91aaa2e: "i need to be able to see the 3 carts it is
+   making and then also see the recommended cart." A recommendation whose
+   alternatives cannot be inspected cannot be checked. */
+.merchant-row-wrap > summary { list-style: none; cursor: pointer; }
+.merchant-row-wrap > summary::-webkit-details-marker { display: none; }
+.merchant-row-wrap > summary::after { content: "▸"; opacity: .45; margin-left: .5rem; }
+.merchant-row-wrap[open] > summary::after { content: "▾"; }

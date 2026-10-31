@@ -190,6 +190,64 @@ def test_unparseable_revision_is_flagged_not_silent(live):
     )
 
 
+def test_revision_that_empties_cart_falls_back_to_pre_revision(live):
+    """Regression test for the order_59eaa8e03b2b bug: a revision that
+    removes every item the catalogue can fulfil must NOT leave the order
+    stuck in 'revising' with a null cart. The worker must fall back to
+    re-proposing the pre-revision cart with an explanation.
+
+    THE ITEM WORDING CHANGED, and the reason is itself a finding. This asked for
+    "5 kg pilsbury multigrain atta", which mockstore does not stock — it carries
+    Aashirvaad Whole Wheat and Fortune Chakki. The test passed anyway because the
+    old picker substituted a different brand without a word, which is the exact
+    behaviour order_6a45f91aaa2e complained about. worker/auditor.py now refuses
+    that substitution, so the phrase no longer resolves and the premise is gone.
+    The subject of this test is the revision dead end, not brand matching, so it
+    asks for something the catalogue genuinely has."""
+    client = _login(live["console"])
+    r = client.post("/api/intent", json={"items": ["5 kg atta"], "max_total_inr": 900})
+    order_id = r.json()["order_id"]
+
+    import worker.run as worker_run
+    worker_run._plan_and_propose(order_id, ["5 kg atta"], 900)
+    order = client.get(f"/api/order/{order_id}").json()
+    assert order["state"] == "proposed"
+
+    client.post(f"/console/order/{order_id}/revise", json={"instruction_text": "drop the atta"})
+    order = client.get(f"/api/order/{order_id}").json()
+    assert order["state"] == "revising"
+
+    hints = worker_run._interpret_revision("drop the atta")
+    assert "atta" in hints["drop"]
+
+    amendment_ids = [a["amendment_id"] for a in order["amendments"]]
+    result = worker_run._plan_and_propose(
+        order_id, ["5 kg atta"], 900,
+        drop_terms=hints["drop"],
+        cart_version=order["cart_version"] + 1,
+        amendment_ids=amendment_ids,
+        revision_instruction="drop the atta",
+    )
+    assert result is None, "dropping every item should produce no viable cart"
+
+    worker_run._plan_and_propose(
+        order_id, ["5 kg atta"], 900,
+        cart_version=order["cart_version"] + 1,
+        amendment_ids=amendment_ids,
+        revision_instruction="drop the atta",
+        revision_could_not_be_applied=True,
+    )
+
+    order = client.get(f"/api/order/{order_id}").json()
+    assert order["state"] == "proposed", (
+        f"order must leave 'revising' after fallback, got '{order['state']}'"
+    )
+    assert order["cart"] is not None, "the pre-revision cart must be re-proposed"
+    assert "no items" in order["narrative"].lower() or "could not" in order["narrative"].lower(), (
+        f"narrative must explain the revision failed, got: {order['narrative'][:120]}"
+    )
+
+
 def test_worker_main_resumes_without_crashing_on_a_non_draft_order(live):
     """Regression test for a real crash found by hand: re-running
     `python -m worker.run <order_id>` against an order that had already been

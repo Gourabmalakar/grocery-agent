@@ -104,6 +104,13 @@ _PACK_SIZE_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(" + "|".join(_TITLE_UNITS) + r")\b", re.IGNORECASE
 )
 
+# The same vocabulary, as a membership test for callers that have already
+# isolated a candidate unit and need to know whether it is a pack unit at
+# all. Exported because a scraper classifying a line as "a size" by shape
+# alone will read a delivery estimate ("9 MINS") as 9 units of "mins" — see
+# grocery/adapters/blinkit_browser.py::_parse_size.
+KNOWN_PACK_UNITS = frozenset(_TITLE_UNITS)
+
 
 def parse_pack_size(text: str) -> tuple[float, str] | None:
     """Extract a PACK SIZE from a product title: "Amul Gold Homogenised

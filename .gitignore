@@ -1,7 +1,16 @@
 __pycache__/
 *.pyc
 .venv/
+# EVERY .env VARIANT, not just .env. A `.env.bak.1793429230` holding the live
+# Gemini key, Telegram bot token, Console API token and payment passphrase was
+# sitting un-ignored in the working tree the day this repo was made public —
+# created by tools/set_passphrase.sh, which helpfully backed the file up before
+# editing it. An ignore rule that names one exact filename is one rename away
+# from useless.
 .env
+.env.*
+!.env.example
+*.bak
 # All of data/ is runtime state (mandate keys, ledger, audit logs, orders,
 # vault) — none of it belongs in version control. This used to list specific
 # subpaths and missed data/orders/ and data/mandates/, which briefly leaked a

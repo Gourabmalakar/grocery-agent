@@ -10,6 +10,8 @@ Run: python -m console.app   (serves on :8800)
 """
 from __future__ import annotations
 
+import secrets
+
 import time
 from typing import Any
 
@@ -31,8 +33,29 @@ from console import approval, revision
 from console.auth import passphrase, session
 from console.rails.mock_rail import MockRail
 from grocery.adapters.mock import MockAdapter
+from console import adapters as console_adapters
+from console import choose_basket
+from console import ordering
+from console.rails import select as rail_select
 
 app = FastAPI(title="grocery-console", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.on_event("startup")
+def _payment_preflight() -> None:
+    """Refuse to serve with payments on and an unsafe configuration.
+
+    Checked at STARTUP rather than at the first payment, because a
+    misconfiguration discovered when somebody is trying to pay is discovered in
+    the worst possible place. assert_safe_to_take_payments() is a no-op while
+    PAYMENT_BACKEND=off, so this costs nothing until it matters.
+    """
+    config.assert_safe_to_take_payments()
+    if config.payments_enabled():
+        from console.auth import bot_passphrase
+        bot_passphrase.provision_from_config()
+        print(f"[console] payments={config.PAYMENT_BACKEND} "
+              f"· methods={rail_select.available()}")
 templates = Jinja2Templates(directory=str(config.ROOT / "console" / "templates"))
 
 # NB: this mount was missing entirely through Phase 0 — every page linked
@@ -53,6 +76,22 @@ def _require_session(request: Request) -> dict:
     if not data:
         raise HTTPException(401, "session expired — re-enter the passphrase")
     return data
+
+
+def _require_session_or_bot(request: Request) -> None:
+    """A human session OR the bot's own token — for the routes that change what
+    is being bought but cannot spend anything.
+
+    Deliberately NOT usable for payment. `console_approve_payment` keeps
+    `_require_session` + `_require_live_window`, so the bot's standing
+    credential can revise a basket and freeze a cart, and can never buy it.
+    That split is the whole reason the bot has a token of its own rather than
+    Gourab's passphrase — see grocery/config.py::BOT_API_TOKEN.
+    """
+    offered = request.headers.get("X-Bot-Token", "")
+    if offered and config.BOT_API_TOKEN and secrets.compare_digest(offered, config.BOT_API_TOKEN):
+        return
+    _require_session(request)
 
 
 def _require_live_window(request: Request) -> None:
@@ -118,9 +157,15 @@ def order_page(request: Request, order_id: str):
     trace = decision_log.trace(order_id)
     order_json = order.to_json()
     assistant_message = narrator.narrate_for_order(order_json)
+    # Whether the "Approve payment" button should exist at all. A button that
+    # 409s when pressed teaches a human that the system is flaky; a card that
+    # explains the boundary teaches them where it is.
+    cart = order_json.get("cart") or {}
+    execution_available = bool(cart) and console_adapters.is_executable(cart.get("merchant", ""))
     return templates.TemplateResponse(request, "order.html", {
         "active_nav": "orders",
         "order": order_json, "trace": trace, "assistant_message": assistant_message,
+        "execution_available": execution_available,
     })
 
 
@@ -315,7 +360,7 @@ class RevisionIn(BaseModel):
 
 @app.post("/console/order/{order_id}/revise")
 def console_revise(request: Request, order_id: str, body: RevisionIn):
-    _require_session(request)
+    _require_session_or_bot(request)
     try:
         order = revision.submit_feedback(order_id, body.instruction_text)
     except (approval.IllegalTransition, approval.ApprovalRefused) as e:
@@ -325,7 +370,7 @@ def console_revise(request: Request, order_id: str, body: RevisionIn):
 
 @app.post("/console/order/{order_id}/approve_cart")
 def console_approve_cart(request: Request, order_id: str):
-    _require_session(request)
+    _require_session_or_bot(request)
     try:
         order = approval.approve_cart(order_id, approved_by="gourab", approval_factor="passphrase")
     except (approval.IllegalTransition, approval.ApprovalRefused) as e:
@@ -339,7 +384,15 @@ def console_approve_payment(request: Request, order_id: str):
     _require_live_window(request)
     order = approval.load(order_id)
     rail = MockRail()
-    adapter = MockAdapter(order.cart["merchant"])
+    try:
+        adapter = console_adapters.adapter_for(order.cart["merchant"], for_execution=True)
+    except console_adapters.ExecutionUnavailable as e:
+        # 409 and the order STAYS `approved` — deliberately not transitioned to
+        # refused. Burning a cart the human just approved is their call, not a
+        # side effect of hitting a boundary they could not have known about.
+        audit_log.append("order.execution_unavailable", {
+            "order_id": order_id, "merchant": order.cart["merchant"], "reason": str(e)})
+        raise HTTPException(409, str(e))
     try:
         order = approval.approve_payment_and_execute(
             order_id, approved_by="gourab", approval_factor="passphrase+live_window",
@@ -348,6 +401,174 @@ def console_approve_payment(request: Request, order_id: str):
     except (approval.IllegalTransition, approval.ApprovalRefused) as e:
         raise HTTPException(409, str(e))
     return order.to_json()
+
+
+@app.post("/console/order/{order_id}/choose_basket")
+def console_choose_basket(request: Request, order_id: str, merchant: str = Form(...)):
+    """Take a different store's basket than the one that was recommended.
+
+    A human choice between options the worker already produced — see
+    console/choose_basket.py for why that adds no authority and why it does not
+    go through the worker."""
+    _require_session_or_bot(request)
+    order = approval.load(order_id)
+    if order.state != approval.State.PROPOSED:
+        raise HTTPException(409, f"a basket can only be chosen while the order is proposed, "
+                                 f"not {order.state.value}")
+    if order.cart and order.cart.get("merchant") == merchant:
+        raise HTTPException(409, f"{merchant} is already the cart for this order")
+    try:
+        cart = choose_basket.build_cart(order, merchant,
+                                        cart_version=(order.cart_version or 1) + 1)
+    except choose_basket.BasketUnavailable as e:
+        raise HTTPException(409, str(e))
+
+    cart_mandate.persist(cart)
+    audit_log.append("order.basket_chosen_by_human", {
+        "order_id": order_id, "merchant": merchant,
+        "previous_merchant": (order.cart or {}).get("merchant"),
+        "landed_total_inr": cart["landed_total_inr"],
+    })
+    decision_log.record(
+        trace_id=order_id, actor="console", action="basket_chosen_by_human",
+        reasoning=f"Gourab chose {merchant}'s basket over the recommended "
+                  f"{(order.cart or {}).get('merchant')}. No price was re-read and no item "
+                  f"changed: this is the basket the worker already assembled for {merchant}, "
+                  f"re-minted as cart v{cart['cart_version']}.",
+        confidence="high",
+    )
+    # Back through the same door the worker uses, so the lineage and state checks
+    # in propose_cart apply identically to a human-chosen cart.
+    order = approval.request_revision(
+        order_id, instruction_text=f"use {merchant}'s basket instead",
+        requested_by="gourab")
+    order = approval.propose_cart(
+        order_id, cart, comparison=order.comparison,
+        narrative=narrator.narrate_basket_chosen(cart=cart, comparison=order.comparison or []),
+    )
+    return order.to_json()
+
+
+def _execution_adapter_for(order):
+    """What execute() re-quotes against. Real merchants get a shim that reads
+    their already-built basket; everything else keeps the mock path."""
+    merchant = (order.cart or {}).get("merchant", "")
+    if merchant.lower() == "swiggy":
+        built = order.merchant_cart or {}
+        if not built.get("cart_ref"):
+            raise HTTPException(409, "there is no built Swiggy basket to pay for")
+        from console.swiggy_execution import SwiggyExecutionAdapter
+        from grocery.adapters.swiggy_mcp import _access_token
+        return SwiggyExecutionAdapter(token_provider=_access_token,
+                                      cart_ref=built["cart_ref"])
+    return console_adapters.adapter_for(merchant, for_execution=True)
+
+
+@app.post("/console/order/{order_id}/pay")
+def console_pay(request: Request, order_id: str,
+                method: str = Form(...), passphrase: str = Form(""),
+                cart_hash: str = Form("")):
+    """Pay for an approved basket, by one of exactly two methods.
+
+    THE BOT'S TOKEN IS NOT ENOUGH HERE, and that is the point. Every other
+    bot-reachable route changes what is being bought and can spend nothing;
+    this one can move money, so it demands the bot token AND a passphrase that
+    only Gourab knows, verified here rather than in the bot process. The bot
+    relays; the Console decides. Compromising the bot yields the ability to
+    ask.
+
+    `cart_hash` is required and must match the basket on file: the approval was
+    for a specific basket, and a passphrase typed about a ₹451 cart must not
+    authorise a ₹4,510 one that replaced it in between.
+    """
+    _require_session_or_bot(request)
+    config.assert_safe_to_take_payments()
+
+    order = approval.load(order_id)
+    if not order.cart:
+        raise HTTPException(409, "no cart to pay for")
+    if cart_hash and cart_hash != cart_mandate.hash_of(order.cart):
+        raise HTTPException(409, "the basket changed since you were asked to "
+                                 "approve it — look at it again")
+
+    # A human session that is inside its live window has already proved who it
+    # is; a bot relay has to carry the passphrase.
+    from console.auth import bot_passphrase
+    via_bot = bool(request.headers.get("X-Bot-Token"))
+    if via_bot and not bot_passphrase.verify(passphrase):
+        audit_log.append("order.payment_passphrase_refused", {"order_id": order_id})
+        raise HTTPException(403, "passphrase did not verify")
+
+    try:
+        rail = rail_select.rail_for(method)
+    except rail_select.RailUnavailable as e:
+        raise HTTPException(409, str(e))
+
+    try:
+        order = approval.approve_payment_and_execute(
+            order_id, approved_by="gourab",
+            approval_factor="bot_passphrase" if via_bot else "console_session",
+            rail=rail, adapter=_execution_adapter_for(order),
+        )
+    except approval.ApprovalRefused as e:
+        raise HTTPException(409, str(e))
+
+    return {"state": order.state.value, "rail": rail.rail_id,
+            "merchant_order_id": order.merchant_order_id,
+            "amount_inr": (order.payment or {}).get("amount_inr")}
+
+
+@app.get("/console/payment_methods")
+def console_payment_methods(request: Request):
+    """What the chat is allowed to offer. Driven by config, so the two surfaces
+    cannot disagree about whether autonomous payment is on."""
+    _require_session_or_bot(request)
+    return {"available": rail_select.available(),
+            "backend": config.PAYMENT_BACKEND}
+
+
+@app.post("/console/order/{order_id}/build_cart")
+def console_build_cart(request: Request, order_id: str):
+    """Put the approved basket into the merchant's own cart, for real.
+
+    This is a WRITE to Gourab's merchant account, and it is as far as this
+    system goes: the cart surface it uses has no checkout and no order tool, so
+    the worst outcome is a basket he did not want, which `cancel` takes back.
+    Paying still happens in the merchant's app, by him.
+
+    Allowed on the bot's token because it spends nothing. The cart must already
+    be APPROVED — the point of building it is to act on a decision he made, not
+    to make one.
+    """
+    _require_session_or_bot(request)
+    order = approval.load(order_id)
+    if order.state != approval.State.APPROVED:
+        raise HTTPException(409, f"the cart must be approved before it is built "
+                                 f"at the merchant (it is {order.state.value})")
+    if not order.cart:
+        raise HTTPException(409, "no cart to build")
+    if order.merchant_cart:
+        return order.merchant_cart          # idempotent: one basket, not three
+
+    try:
+        built = ordering.build(order.cart)
+    except ordering.CannotBuild as e:
+        audit_log.append("order.merchant_cart_refused", {
+            "order_id": order_id, "merchant": order.cart.get("merchant"), "reason": str(e)})
+        raise HTTPException(409, str(e))
+
+    order.merchant_cart = built.to_json()
+    approval._save(order)
+    audit_log.append("order.merchant_cart_built", {
+        "order_id": order_id, "merchant": built.merchant, "cart_ref": built.cart_ref,
+        "total_inr": built.totals.total_inr})
+    decision_log.record(
+        trace_id=order_id, actor="console", action="merchant_cart_built",
+        reasoning=f"built the approved basket in the real {built.merchant} account as "
+                  f"{built.cart_ref}; merchant totals ₹{built.totals.total_inr:.2f}. "
+                  f"Nothing has been paid — the cart surface used has no checkout tool.",
+        evidence=[built.to_json()], confidence="high")
+    return order.merchant_cart
 
 
 @app.post("/console/order/{order_id}/abort")

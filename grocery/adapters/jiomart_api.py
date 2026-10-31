@@ -72,7 +72,7 @@ def _headers() -> dict[str, str]:
         "Accept": "application/json",
         "Referer": f"{BASE_URL}/",
         "x-location-detail": json.dumps(
-            {"pincode": location.current().pincode, "country": "India"},
+            {"pincode": location.shopping_locus().pincode, "country": "India"},
             separators=(",", ":"),
         ),
     }
@@ -88,7 +88,7 @@ def _get(path: str, params: dict[str, Any]) -> dict[str, Any]:
 
     if response.status_code == 400 and "invalid pincode" in response.text:
         raise AdapterBlocked(
-            f"jiomart rejected pincode {location.current().pincode!r}. "
+            f"jiomart rejected pincode {location.shopping_locus().pincode!r}. "
             "Set a serviceable delivery pincode on the Console's Control page."
         )
     if response.status_code in (401, 403):
@@ -218,7 +218,7 @@ class JioMartApiAdapter(StorefrontAdapter):
         """Probed once per adapter instance per pincode — an order searches
         several queries and re-probing each time would triple the traffic for
         an answer that cannot change mid-order."""
-        pincode = location.current().pincode
+        pincode = location.shopping_locus().pincode
         if self._serviceable_for == pincode:
             return
         _assert_serviceable(pincode)
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     query = " ".join(sys.argv[1:]) or "milk"
     results = JioMartApiAdapter().search(query)
     print(f"{len(results)} listings from {MERCHANT_ID} "
-          f"(pincode {location.current().pincode})\n")
+          f"(pincode {location.shopping_locus().pincode})\n")
     for item in results[:25]:
         stock = "" if item.in_stock else "  (out of stock)"
         print(f"  {item.name[:45]:<45} {item.pack_qty:>7g}{item.pack_unit:<5} "

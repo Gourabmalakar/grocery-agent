@@ -37,6 +37,7 @@ from urllib.parse import quote
 
 from grocery import config, location
 from grocery.adapters.base import CartLine, Listing, Quote, StorefrontAdapter
+from grocery.compare.normalise import KNOWN_PACK_UNITS
 
 MERCHANT_ID = "blinkit"
 BASE_URL = "https://blinkit.com"
@@ -61,13 +62,18 @@ def _location_cookies() -> list[dict]:
     """Blinkit needs coordinates. If the delivery address on file has none,
     we stop rather than fall back to a default point — shopping a different
     neighbourhood at plausible-looking prices is worse than not shopping."""
-    here = location.current()
+    here = location.shopping_locus()
     if not here.has_coordinates:
         raise AdapterUnavailable(here.missing_for(MERCHANT_ID))
     return [
         {"name": "gr_1_lat", "value": str(here.lat), "domain": "blinkit.com", "path": "/"},
         {"name": "gr_1_lon", "value": str(here.lon), "domain": "blinkit.com", "path": "/"},
-        {"name": "gr_1_locality", "value": here.label or here.pincode, "domain": "blinkit.com", "path": "/"},
+        # THE PINCODE, NEVER THE LABEL. This cookie used to carry
+        # `here.label or here.pincode`, so a real address typed into the Control
+        # page's label box was sent to blinkit.com on every single search. The
+        # label is a note to a human and never leaves this machine; ShoppingLocus
+        # has no label field, so this cannot regress by accident.
+        {"name": "gr_1_locality", "value": here.pincode, "domain": "blinkit.com", "path": "/"},
     ]
 
 
@@ -92,29 +98,47 @@ _SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$")
 
 
 def _parse_size(text: str) -> tuple[float, str] | None:
+    """A whole line that is exactly a pack size: "1 ltr", "450 ml", "500 g".
+
+    The unit must be one we can actually normalise. Shape alone is not
+    enough: "9 MINS" is the same shape and would otherwise be read as 9
+    units of "mins", which is how a delivery estimate becomes a pack size
+    and a card's real size line gets skipped."""
     m = _SIZE_RE.match(text.strip())
     if not m:
         return None
-    return float(m.group(1)), m.group(2).lower()
+    unit = m.group(2).lower()
+    if unit not in KNOWN_PACK_UNITS:
+        return None
+    return float(m.group(1)), unit
 
 
 def _parse_card_text(card_id: str, text: str) -> Listing | None:
-    """A search-result card's innerText is a fixed line sequence:
-        ["N% OFF"]? , eta, name, size, price, [mrp]?, cta
-    Returns None — rather than guessing — if the shape doesn't match. A
-    dropped item is safer than a wrongly-parsed price (CLAUDE.md rule 3,
+    """A search-result card's innerText has OPTIONAL leading lines, so this
+    anchors on the one line with a recognisable shape — the pack size — and
+    reads outward from it:
+
+        ["16% OFF"]?  ["9 MINS"]?  name  size  price  [mrp]?  cta
+
+    It used to count from the top (name at [1], size at [2]) on the
+    assumption that the delivery-ETA line was always present. Blinkit
+    dropped that line, every card stopped matching, and search() returned
+    zero listings with no error at all — a silent empty result, which is
+    the worst shape a scraper failure can take. Indexing positionally off
+    an optional field is the bug; find the field you can recognise.
+
+    Returns None — rather than guessing — if the shape still doesn't match.
+    A dropped item is safer than a wrongly-parsed price (CLAUDE.md rule 3,
     applied to a scraped field instead of a catalogue one)."""
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-    if lines and lines[0].upper().endswith("% OFF"):
-        lines = lines[1:]
-    if len(lines) < 4:
-        return None
 
-    name = lines[1]  # lines[0] is the ETA ("9 MINS"), not used
-    size = _parse_size(lines[2])
-    if size is None:
-        return None
-    price_lines = [l for l in lines[3:] if l.startswith("₹")]
+    size_idx = next((i for i, l in enumerate(lines) if _parse_size(l)), None)
+    if size_idx is None or size_idx == 0:
+        return None  # no size line, or nothing above it that could be the name
+
+    name = lines[size_idx - 1]
+    size = _parse_size(lines[size_idx])
+    price_lines = [l for l in lines[size_idx + 1:] if l.startswith("₹")]
     if not price_lines:
         return None
     try:
@@ -139,15 +163,21 @@ def _parse_card_text(card_id: str, text: str) -> Listing | None:
 
 
 def _run_search(query: str) -> list[Listing]:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
     with sync_playwright() as p:
         browser, context = _new_context(p)
         try:
             page = context.new_page()
             page.goto(f"{BASE_URL}/s/?q={quote(query)}", wait_until="domcontentloaded", timeout=20000)
             _check_not_blocked(page)
-            page.wait_for_selector('div[role="button"]', timeout=10000)
-            page.wait_for_timeout(1200)  # let the async product-card fetch finish rendering
+            try:
+                page.wait_for_selector('div[role="button"]', timeout=15000)
+            except PwTimeout:
+                # No product cards appeared — either no results for this query
+                # at this location, or slow render. Grab whatever is on the
+                # page rather than failing outright.
+                pass
+            page.wait_for_timeout(1200)
             cards = page.eval_on_selector_all(
                 'div[role="button"][id]',
                 "els => els.filter(e => /^\\d+$/.test(e.id)).map(e => ({id: e.id, text: e.innerText}))",
@@ -280,7 +310,9 @@ if __name__ == "__main__":
     #   python -m grocery.adapters.blinkit_browser milk
     import sys
     query = " ".join(sys.argv[1:]) or "milk"
-    print(f"searching blinkit.com for {query!r} (location: {config.ADAPTER_LOCATION_LABEL})...\n")
+    # The pincode, not ADAPTER_LOCATION_LABEL — a terminal scrollback is a place
+    # an address persists, and this line is the kind of convenience that leaks one.
+    print(f"searching blinkit.com for {query!r} (area: {location.shopping_locus().pincode})...\n")
     for listing in BlinkitBrowserAdapter().search(query):
         stock = "in stock" if listing.in_stock else "OUT OF STOCK"
         print(f"  {listing.name:<45} {listing.pack_qty:>6g}{listing.pack_unit:<4} "

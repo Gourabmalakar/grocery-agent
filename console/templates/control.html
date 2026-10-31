@@ -38,8 +38,12 @@
   <div class="stack">
     <label class="muted" for="loc-pincode">Pincode</label>
     <input id="loc-pincode" inputmode="numeric" maxlength="6" placeholder="560001" value="{{ location.pincode }}">
-    <label class="muted" for="loc-label">Address label <span style="opacity:.7">(optional)</span></label>
-    <input id="loc-label" placeholder="Home &mdash; Indiranagar, Bengaluru" value="{{ location.label }}">
+    <label class="muted" for="loc-label">Nickname <span style="opacity:.7">(optional)</span></label>
+    <input id="loc-label" placeholder="Home" value="{{ location.label }}">
+    <p class="muted" style="margin:.35rem 0 0">A name for you, not an address. It is never sent to a
+      merchant and never reaches the worker &mdash; it used to be sent to Blinkit as a cookie on every
+      search, which is fixed. There is nowhere here to put a flat number or a phone number, on purpose:
+      nothing in this system needs them until the payment stage, and data it does not hold cannot leak.</p>
     <div class="row">
       <div class="stack" style="flex:1">
         <label class="muted" for="loc-lat">Latitude</label>
@@ -50,7 +54,8 @@
         <input id="loc-lon" inputmode="decimal" placeholder="77.5993" value="{{ location.lon if location.lon is not none else '' }}">
       </div>
     </div>
-    <p class="muted" style="margin:0">Blinkit and Zepto locate you by coordinates rather than pincode. Leave these blank and they are left out of the comparison and told to you &mdash; rather than shopping a guessed-at neighbourhood and quoting you prices from it.</p>
+    <p class="muted" style="margin:0">Blinkit and Swiggy locate you by coordinates rather than pincode. Leave these blank and they are left out of the comparison and told to you &mdash; rather than shopping a guessed-at neighbourhood and quoting you prices from it.</p>
+    <p class="muted" style="margin:.35rem 0 0"><strong>Coordinates are rounded to about a kilometre before they are saved</strong>, so what is stored points at an area and not at a building. Verified against Blinkit: the rounded point returns the same stores and the same prices, because a quick-commerce catchment is two to three kilometres wide.</p>
     <button class="primary" id="loc-save" onclick="saveLocation()">Save address</button>
   </div>
 </div>

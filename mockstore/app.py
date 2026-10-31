@@ -37,7 +37,8 @@ def _find_listing(merchant: str, sku: str) -> dict[str, Any] | None:
     for item in CATALOG.values():
         listing = item["listings"].get(merchant)
         if listing and listing["sku"] == sku:
-            return {**listing, "category": item["category"]}
+            return {**listing, "category": item["category"],
+                    "query_terms": item.get("query_terms", [])}
     return None
 
 
@@ -64,6 +65,7 @@ def search(q: str, merchant: str | None = None):
                 continue
             out.append({
                 "item_key": key, "merchant": m, "category": item["category"],
+                "query_terms": item.get("query_terms", []),
                 **listing,
                 "price_source": "mockstore_page", "asof": time.time(),
             })

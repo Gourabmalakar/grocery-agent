@@ -15,8 +15,21 @@ class WalletRail(PaymentRail):
     rail_id = "merchant_wallet"
 
     def pay(self, *, payment_mandate: dict[str, Any], cart_ref: str, adapter: Any) -> PayResult:
-        raise NotImplementedError(
-            "merchant_wallet rail is a Phase 4 deliverable — see the plan's "
-            "phasing section. It is not wired up, and MODE=live must not "
-            "silently fall back to it."
+        """RETURNS A FAILURE; it must not raise.
+
+        It used to raise NotImplementedError, which propagated out of
+        execute() AFTER the order had been transitioned to EXECUTING — so the
+        order was stranded in a state with no recovery path, looking exactly
+        like an order that might have been paid. A rail that cannot pay has to
+        say so in the one vocabulary execute() handles, which is PayResult.
+
+        The real autonomous rail is console/rails/swiggy_wallet.py. This stays
+        as the generic placeholder so a misconfiguration fails closed and
+        legibly rather than by exception.
+        """
+        return PayResult(
+            ok=False,
+            detail="the generic merchant_wallet rail is not implemented — "
+                   "configure a merchant-specific rail instead",
+            settled=False,
         )

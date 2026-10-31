@@ -23,12 +23,29 @@ def isolated_data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CAP_PER_ORDER_INR", "800")
     monkeypatch.setenv("CAP_PER_DAY_INR", "1500")
     monkeypatch.setenv("CAP_PER_MONTH_INR", "6000")
+    monkeypatch.setenv("MERCHANT_BACKEND", "mock")
+    # The test suite must never call a language model: no key, no network, no
+    # quota, no latency, and no dependence on what a model said today. This is
+    # the same hazard as MERCHANT_BACKEND — grocery/config.py reads .env with
+    # load_dotenv(override=False), so a developer's LLM_BACKEND=gemini leaks
+    # straight into pytest. It did: the suite went from 18s to 86s of real API
+    # calls before this line existed.
+    monkeypatch.setenv("LLM_BACKEND", "off")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
 
     # Purge any already-imported grocery/console modules so they re-read the
     # env vars above via a fresh grocery.config import — config.py computes
     # its paths at import time.
+    # worker/ is purged alongside grocery/ and console/, and that is not
+    # tidiness. worker.llm.client binds `grocery.config` at import; reloading
+    # config without dropping the worker leaves the client holding the OLD
+    # module object — the one carrying LLM_BACKEND=gemini and the real API key
+    # from .env. A test then makes a live, billed call while believing the model
+    # is switched off. Caught exactly that way: test_reviser's "no model" case
+    # came back with a real interpretation.
     for mod in list(sys.modules):
-        if mod == "grocery" or mod.startswith("grocery.") or mod == "console" or mod.startswith("console."):
+        root = mod.split(".")[0]
+        if root in ("grocery", "console", "worker", "bot"):
             del sys.modules[mod]
 
     import grocery.config as config
@@ -40,8 +57,12 @@ def isolated_data_dir(tmp_path, monkeypatch):
     # above, and would otherwise leak state between tests. Redirect them
     # into tmp_path here so tests stay isolated without changing the
     # production path convention.
+    # Set on the module as well as in the env: the env var is read at import,
+    # and config has already been reloaded by the time we get here.
+    config.KILLSWITCH_DIR = tmp_path
     config.PANIC_FILE = tmp_path / "console_PANIC"
     config.PAUSE_FILE = tmp_path / "console_PAUSE"
+    monkeypatch.setenv("KILLSWITCH_DIR", str(tmp_path))
     return config
 
 
@@ -105,8 +126,18 @@ def live(tmp_path):
         "CAP_PER_ORDER_INR": "800",
         "CAP_PER_DAY_INR": "1500",
         "CAP_PER_MONTH_INR": "6000",
+        "MERCHANT_BACKEND": "mock",
+        "LLM_BACKEND": "off",
+        "GEMINI_API_KEY": "",
+        # So a subprocess that trips PANIC writes into tmp, not into the repo —
+        # where it would stop a worker the human is running right now.
+        "KILLSWITCH_DIR": str(tmp_path / "killswitch"),
+        # The Console subprocess needs this to recognise the bot; monkeypatching
+        # it in the test process cannot reach a process already spawned.
+        "BOT_API_TOKEN": "test-bot-token",
     }
 
+    (tmp_path / "killswitch").mkdir(parents=True, exist_ok=True)
     ctx = multiprocessing.get_context("spawn")
     mock_proc = ctx.Process(target=_run_uvicorn, args=("mockstore.app:app", mock_port, env))
     console_proc = ctx.Process(target=_run_uvicorn, args=("console.app:app", console_port, env))
@@ -125,7 +156,7 @@ def live(tmp_path):
         # bind fresh against the env just set, exactly as a real separate
         # `python -m worker.run` process would.
         for mod in list(sys.modules):
-            if mod.split(".")[0] in ("grocery", "console", "worker", "mockstore"):
+            if mod.split(".")[0] in ("grocery", "console", "worker", "mockstore", "bot"):
                 del sys.modules[mod]
 
         yield {"mock": f"http://127.0.0.1:{mock_port}", "console": f"http://127.0.0.1:{console_port}"}

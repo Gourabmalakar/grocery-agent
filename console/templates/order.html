@@ -62,6 +62,25 @@
 </div>
 {% endif %}
 
+{% if o.state in ['draft', 'revising'] and not o.cart %}
+<div class="card">
+  <h3>{{ 'Working on your changes…' if o.state == 'revising' else 'Shopping…' }}</h3>
+  <p class="muted">
+    {% if o.state == 'revising' %}Your revision is saved and waiting to be picked up.{% else %}Your request is saved and waiting to be picked up.{% endif %}
+    The shopping runs in a <strong>separate process</strong> — that separation is deliberate, and it
+    means nothing happens here until that process is running.
+  </p>
+  <p class="muted"><strong>If this has been sitting here more than a minute or two, the worker is not
+    running.</strong> Start it (or restart it — it picks up a waiting revision on startup):</p>
+  <pre style="overflow-x:auto"><code>./.venv/bin/python -m worker.run {{ o.order_id }}</code></pre>
+  <p class="muted">Leave it running while you revise: it polls every couple of seconds, so each change
+    you type is picked up in place. It stops on its own after 15 minutes.</p>
+  <div class="row spacer-top">
+    <button class="danger ghost" onclick="abortOrder()">Abort</button>
+  </div>
+</div>
+{% endif %}
+
 {% if o.cart and o.state in ['proposed', 'revising'] %}
 <div class="card">
   <div class="row between">
@@ -90,11 +109,31 @@
 {% if o.comparison and o.comparison | length > 1 %}
 <div class="card">
   <h3>Why this store</h3>
+  <p class="muted" style="margin-top:0">Every store's basket, not just the winning one — a
+    recommendation you cannot see the alternatives to is one you cannot check.</p>
   {% for m in o.comparison | sort(attribute='rank') %}
-  <div class="merchant-row {{ 'winner' if m.merchant == o.cart.merchant }}">
-    <span class="merchant-name">{{ '🏆 ' if m.cheapest_by_landed_cost }}{{ m.merchant }}{{ ' (below minimum order)' if m.below_min_order }}</span>
-    <span class="merchant-total">₹{{ '%.2f'|format(m.landed_total_inr) }}</span>
-  </div>
+  <details class="merchant-row-wrap" {{ 'open' if m.merchant == o.cart.merchant }}>
+    <summary class="merchant-row {{ 'winner' if m.merchant == o.cart.merchant }}">
+      <span class="merchant-name">{{ '🏆 ' if m.cheapest_by_landed_cost }}{{ m.merchant }}{{ ' (below minimum order)' if m.below_min_order }}</span>
+      <span class="merchant-total">
+        {% if m.items_requested %}<span class="muted" style="font-weight:400">{{ m.items_fulfilled }}/{{ m.items_requested }} items&nbsp;&nbsp;</span>{% endif %}₹{{ '%.2f'|format(m.landed_total_inr) }}
+      </span>
+    </summary>
+    <div style="padding:6px 0 10px 4px">
+      {% for li in m.line_items %}
+      <div class="receipt-line"><span>{{ li.name }}{% if li.qty != 1 %} × {{ li.qty }}{% endif %}</span><span>₹{{ '%.2f'|format(li.line_total_inr) }}</span></div>
+      {% endfor %}
+      {% if m.unfulfilled_items %}
+      <p class="muted" style="margin:6px 0 0">Could not find: {{ m.unfulfilled_items | join(', ') }}
+        — which is why this basket is cheaper, not a saving.</p>
+      {% endif %}
+      {% if not m.line_items %}<p class="muted" style="margin:6px 0 0">Nothing from this store.</p>{% endif %}
+      {% if m.line_items and o.state == 'proposed' and m.merchant != o.cart.merchant and not m.below_min_order %}
+      <button class="ghost spacer-top" onclick="chooseBasket('{{ m.merchant }}')">
+        Use {{ m.merchant }}'s basket instead — ₹{{ '%.2f'|format(m.landed_total_inr) }}</button>
+      {% endif %}
+    </div>
+  </details>
   {% endfor %}
 </div>
 {% endif %}
@@ -118,11 +157,23 @@
   <div class="receipt" style="border-top:none; margin-top:0; padding-top:0">
     <div class="receipt-line total"><span>Approved total</span><span>₹{{ '%.2f'|format(o.cart.landed_total_inr) }}</span></div>
   </div>
+  {% if execution_available %}
   <p class="muted">I'll re-check the price with {{ o.cart.merchant }} first — if anything drifted since you approved, I'll refuse rather than charge the new amount, and you'll see why.</p>
   <div class="row spacer-top">
     <button class="primary" id="approve-pay-btn" onclick="approvePayment()" style="flex:1">✅ Approve payment</button>
     <button class="danger ghost" onclick="abortOrder()">Abort</button>
   </div>
+  {% else %}
+  <p class="muted"><strong>{{ o.cart.merchant }} is a real merchant.</strong> I can read its prices,
+    and the cart above is real — real SKUs, real prices, signed. But I cannot place the order:
+    carting and payment need authority this system deliberately does not hold, and will not until
+    the payment stage is built with its own approval gate. Nothing has been charged.</p>
+  <p class="muted">Your approval of this cart is recorded. To exercise the payment path end to end,
+    run an order against a mock merchant.</p>
+  <div class="row spacer-top">
+    <button class="danger ghost" onclick="abortOrder()">Abort</button>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -195,6 +246,17 @@ async function approveCart() {
     if (r.ok) { location.reload(); } else { toast(friendlyError(await r.json().catch(()=>({}))), 'danger'); }
   });
 }
+async function chooseBasket(merchant) {
+  // The human picking between baskets the worker already assembled. No price is
+  // re-read and no item changes — see console/choose_basket.py.
+  const body = new URLSearchParams({merchant});
+  const r = await fetch(`/console/order/${orderId}/choose_basket`, {
+    method: 'POST', body,
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}});
+  if (!r.ok) { toast((await r.json()).detail || 'could not switch', 'warn'); return; }
+  location.reload();
+}
+
 async function approvePayment() {
   const btn = document.getElementById('approve-pay-btn');
   await withLoading(btn, ' Placing your order…', async () => {
@@ -208,11 +270,24 @@ async function abortOrder() {
   if (r.ok) location.reload(); else toast('Could not abort — try again', 'danger');
 }
 
+// Restore the trace panel if it was open before a reload.
+(function() {
+  if (sessionStorage.getItem('trace-open') === '1') {
+    var d = document.querySelector('details.trace-wrap');
+    if (d) d.open = true;
+  }
+})();
+
 // Gently poll while something is happening in the background (the worker
 // searching, revising, or the payment executing) so the human doesn't have
 // to keep hitting refresh by hand.
 if (['draft', 'revising', 'executing'].includes("{{ o.state }}")) {
-  setTimeout(() => location.reload(), 3000);
+  setTimeout(function() {
+    var d = document.querySelector('details.trace-wrap');
+    if (d && d.open) sessionStorage.setItem('trace-open', '1');
+    else sessionStorage.removeItem('trace-open');
+    location.reload();
+  }, 3000);
 }
 </script>
 {% endblock %}

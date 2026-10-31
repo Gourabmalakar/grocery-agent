@@ -17,13 +17,28 @@ import re
 from console import approval
 from grocery.audit import log as audit_log
 
+# WHAT THIS IS FOR, NOW THAT THE REVISER EXISTS. These patterns are a cheap
+# early catch, not the defence and not the interpreter. The defence is
+# structural: max_total_inr lives on the signed intent and NO amendment path
+# writes it, so a revision cannot raise the cap however it is phrased. The
+# interpreter is worker/reviser, which reads the sentence and answers a budget
+# request with a plain "I cannot change the spending limit" — measured, it
+# catches "bump it to 2000", "i can pay more", "whatever it costs" and "dont
+# worry about the cap", all four of which these patterns miss.
+#
+# So these have been NARROWED rather than extended. A bare `\bno limit\b` was
+# refusing "no limit on brand, any is fine" — a perfectly ordinary revision — and
+# a false refusal here is worse than a miss, because a miss still reaches the
+# reviser and gets a real answer, while a refusal stops the human dead. Each
+# pattern now requires the limit word to actually be about money.
 _CAP_RAISE_PATTERNS = [
-    r"\bincrease\b.*\b(budget|cap|limit)\b",
-    r"\braise\b.*\b(budget|cap|limit)\b",
+    r"\bincrease\b.*\b(budget|cap|limit|amount)\b",
+    r"\braise\b.*\b(budget|cap|limit|amount)\b",
     r"\bspend more\b",
-    r"\bignore\b.*\b(budget|cap|limit)\b",
-    r"\bno limit\b",
-    r"\bremove\b.*\b(cap|limit)\b",
+    r"\bignore\b.*\b(budget|cap|limit)\b",   # "ignore the limit" has no innocent reading
+    r"\bno (?:budget|spending|price|cost)\b.*\blimit\b",
+    r"\bno limit\b.*\b(budget|spend|price|cost|money)\b",
+    r"\bremove\b.*\b(the )?(cap|budget|spending limit)\b",
     r"\ballow\b.*\bover budget\b",
 ]
 

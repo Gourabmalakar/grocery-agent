@@ -23,6 +23,7 @@ class LandedCostBreakdown:
     landed_total_inr: float
     below_min_order: bool
     min_order_shortfall_inr: float
+    fees_known: bool = True
 
 
 def compute(quote: Quote) -> LandedCostBreakdown:
@@ -52,6 +53,19 @@ def suggest_min_order_topup(quote: Quote, next_free_delivery_threshold_inr: floa
     if shortfall <= 0 or quote.delivery_fee_inr <= 0:
         return None
     return f"Add ₹{shortfall:.0f} more to clear free delivery and save ₹{quote.delivery_fee_inr:.0f}"
+
+
+def compute_subtotal_only(merchant: str, subtotal_inr: float) -> LandedCostBreakdown:
+    """For real merchants where delivery/handling fees can't be read without
+    building a cart. Ranks on item subtotal only; the narrative must disclose
+    that fees are not included."""
+    return LandedCostBreakdown(
+        merchant=merchant, items_subtotal_inr=subtotal_inr,
+        delivery_fee_inr=0.0, handling_fee_inr=0.0,
+        coupon_discount_inr=0.0, landed_total_inr=subtotal_inr,
+        below_min_order=False, min_order_shortfall_inr=0.0,
+        fees_known=False,
+    )
 
 
 def compute_from_subtotal(merchant: str, subtotal_inr: float, meta: dict) -> LandedCostBreakdown:

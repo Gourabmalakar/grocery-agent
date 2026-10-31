@@ -22,7 +22,8 @@ class MockAdapter(StorefrontAdapter):
             Listing(
                 merchant=row["merchant"], sku=row["sku"], name=row["name"], brand=row["brand"],
                 pack_qty=row["pack_qty"], pack_unit=row["pack_unit"], price_inr=row["price_inr"],
-                in_stock=row["in_stock"], category=row["category"],
+                in_stock=row["in_stock"],
+            category=" ".join([row["category"], *row.get("query_terms", [])]),
                 price_source=row["price_source"], asof=row["asof"],
                 raw_description=row.get("description", ""),
             )
@@ -36,7 +37,8 @@ class MockAdapter(StorefrontAdapter):
         return Listing(
             merchant=self.merchant_id, sku=row["sku"], name=row["name"], brand=row["brand"],
             pack_qty=row["pack_qty"], pack_unit=row["pack_unit"], price_inr=row["price_inr"],
-            in_stock=row["in_stock"], category=row["category"],
+            in_stock=row["in_stock"],
+            category=" ".join([row["category"], *row.get("query_terms", [])]),
             price_source=row["price_source"], asof=row["asof"],
             raw_description=row.get("description", ""),
         )

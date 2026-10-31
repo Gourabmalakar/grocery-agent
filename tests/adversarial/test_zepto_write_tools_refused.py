@@ -9,16 +9,35 @@ Gourab's money, and they must all fail closed. Nothing here touches the
 network: the point is that the refusal happens BEFORE dispatch, so it holds
 even with a valid token and a reachable server.
 
-The grant is the primary defence (scope=tools:read, enforced by Zepto's own
-authorization server). These cover the second and third layers.
+The grant is NOT the primary defence, though this file used to say it was.
+Measured against the live server on 2026-09-27, a token carrying exactly
+scope=tools:read is still offered update_cart, create_order,
+create_wallet_order, create_upi_reserve_pay_order and
+create_online_payment_order by tools/list. Zepto's authorization server records
+the scope; its MCP server does not enforce it on the tool surface. So the
+allowlist below is the defence, not a backstop to one.
 """
 from __future__ import annotations
 
 import pytest
 
+# Invented names — these prove the guard is a positive allowlist rather than a
+# list of things someone thought of.
 _WRITE_TOOL_NAMES = [
     "place_order", "add_to_cart", "update_cart", "remove_from_cart",
     "cart_manage", "checkout", "pay", "create_order", "delete_item",
+]
+
+# REAL names, read off a live tools/list on 2026-09-27 under a tools:read grant.
+# This list exists because the invented one above missed most of them: the first
+# write guard matched "create_order" literally and therefore sailed past
+# create_wallet_order and create_upi_reserve_pay_order — two tools that spend
+# money. Test against the surface that exists, not the one in the README.
+_REAL_WRITE_TOOLS_OFFERED = [
+    "update_cart", "view_cart", "create_order", "create_online_payment_order",
+    "create_wallet_order", "create_upi_reserve_pay_order", "get_payment_methods",
+    "check_payment_status", "add_saved_address", "update_drop_zone",
+    "select_store", "zepto_shop", "update_user_name",
 ]
 
 
@@ -30,6 +49,29 @@ def test_write_shaped_tools_are_refused_before_dispatch(isolated_data_dir, tool)
 
     with pytest.raises(WriteToolRefused):
         ZeptoMCPAdapter()._call(tool, {})
+
+
+@pytest.mark.parametrize("tool", _REAL_WRITE_TOOLS_OFFERED)
+def test_every_write_tool_zepto_actually_offers_is_refused(isolated_data_dir, tool):
+    """Each of these was on offer to a read-scoped token. Each must be refused
+    before dispatch. zepto_shop is here because its own schema accepts
+    intent="order", which makes a single tool call an ordering surface."""
+    from grocery.adapters.zepto_mcp import WriteToolRefused, ZeptoMCPAdapter
+
+    with pytest.raises(WriteToolRefused):
+        ZeptoMCPAdapter()._call(tool, {})
+
+
+def test_the_write_guard_has_no_exceptions(isolated_data_dir):
+    """There was briefly one, for update_user_name, so that the adapter could
+    complete Zepto's registration gate itself. It is gone: registration is a
+    human action in Zepto's app. If an exemption mechanism comes back, it should
+    have to delete this test to do it."""
+    from grocery.adapters import zepto_mcp
+
+    assert not hasattr(zepto_mcp, "_WRITE_SHAPED_EXEMPT")
+    for name in zepto_mcp._ALLOWED_TOOLS:
+        assert not zepto_mcp._is_write_shaped(name)
 
 
 def test_allowlist_is_positive_not_a_denylist(isolated_data_dir):

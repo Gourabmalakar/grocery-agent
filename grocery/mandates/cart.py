@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Any
 
-from grocery.mandates.signing import sign, save_issued, content_hash
+from grocery.mandates.signing import sign, save_issued, content_hash, verify
 
 
 def new_cart(
@@ -60,3 +60,33 @@ def hash_matches(cart: dict[str, Any]) -> bool:
     this cart change since it was approved? Any drift, however small, fails
     closed rather than charging a cart the human never saw."""
     return cart.get("cart_hash") == recompute_hash(cart)
+
+
+def hash_of(cart: dict[str, Any]) -> str:
+    """The stored hash if there is one, else the recomputed one. Used as the
+    stable identity of an approved basket in the pay-intent key."""
+    return str(cart.get("cart_hash") or recompute_hash(cart))
+
+
+def signature_valid(cart: dict[str, Any]) -> bool:
+    """Does this cart's ES256 signature verify?
+
+    WHY THIS WRAPPER EXISTS, rather than calling signing.verify() directly —
+    and it is a real bug, not ceremony. new_cart() signs the payload and THEN
+    adds `cart_hash` to the signed document:
+
+        signed = sign(payload)                     # signature over payload
+        signed["cart_hash"] = content_hash(payload)   # added afterwards
+
+    signing.verify() rebuilds the body as "everything except `signature`",
+    which therefore includes `cart_hash` — a field that did not exist when the
+    signature was computed. So verify() returns False for every genuine cart
+    this system has ever issued.
+
+    That is almost certainly why `verify()` had no production call site: wiring
+    it in as-is would have refused every payment. Excluding `cart_hash` here
+    restores the field set that was actually signed, so a real mandate verifies
+    and a tampered one does not.
+    """
+    body = {k: v for k, v in cart.items() if k != "cart_hash"}
+    return verify(body)

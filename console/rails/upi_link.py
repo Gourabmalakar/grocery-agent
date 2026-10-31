@@ -34,8 +34,23 @@ class UpiHandoffRail(PaymentRail):
         self._lookup = payee_vpa_lookup
 
     def pay(self, *, payment_mandate: dict[str, Any], cart_ref: str, adapter: Any) -> PayResult:
-        # This rail does not itself complete a payment — it hands a link to
-        # a human. execute() treats "link shown" as the terminal state for
-        # this rail; reconciliation against actual settlement is a Phase-3
-        # follow-up, not implemented in Phase 0.
-        return PayResult(ok=True, detail="UPI link generated — awaiting human payment in their own app")
+        """NOT SELECTABLE, and it returns a failure rather than a success.
+
+        This rail never completed a payment — it rendered a deep link and
+        returned ok=True, which execute() read as "paid". The order went to
+        DONE and record_spend() wrote a spend that had not happened, so the
+        caps were consumed by money nobody had sent and the merchant was still
+        waiting. The rail could not even tell whether the human paid.
+
+        PayResult now distinguishes settled from handed-off, so a hand-off has
+        an honest representation — but it belongs to InAppHandoffRail, which
+        hands over a real basket in the merchant's own app rather than a bare
+        UPI string with no order behind it. This stays as a hard refusal so
+        nothing can select it by accident.
+        """
+        return PayResult(
+            ok=False,
+            detail="the bare UPI link rail is not selectable — it cannot tell "
+                   "whether a payment happened. Use the in-app hand-off.",
+            settled=False,
+        )

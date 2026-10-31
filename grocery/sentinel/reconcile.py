@@ -46,7 +46,7 @@ def reconcile_orders_vs_ledger() -> ReconciliationResult:
     orders_total = sum(o.payment["amount_inr"] for o in done)
 
     with sqlite3.connect(str(config.LEDGER_DB)) as conn:
-        conn.execute(ledger_store._SCHEMA)
+        conn.executescript(ledger_store._SCHEMA)   # more than one statement
         row = conn.execute("SELECT COALESCE(SUM(amount_inr), 0) AS s, COUNT(*) AS c FROM spend").fetchone()
         ledger_total, ledger_count = float(row[0]), int(row[1])
 

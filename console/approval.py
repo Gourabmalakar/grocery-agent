@@ -45,6 +45,16 @@ class State(str, Enum):
     REVISING = "revising"
     APPROVED = "approved"
     EXECUTING = "executing"
+    # The rail did its job and charged nothing — a basket waiting in the
+    # merchant's app for a human to pay. NOT done: no money moved, nothing
+    # counts against the caps, and he still has to act.
+    AWAITING_PAYMENT = "awaiting_payment"
+    # The payment call did not come back cleanly, so whether money moved is
+    # UNKNOWN. Terminal until a human or the sentinel reconciles it against the
+    # merchant's order history. Deliberately distinct from REFUSED, which means
+    # "definitely did not pay" — treating an unknown as a failure is how an
+    # order gets placed twice.
+    NEEDS_RECONCILIATION = "needs_reconciliation"
     DONE = "done"
     ABORTED = "aborted"
     REFUSED = "refused"  # terminal, non-money-moving failure (budget, hash mismatch, etc.)
@@ -60,7 +70,13 @@ _LEGAL_TRANSITIONS: dict[State, set[State]] = {
     # entered (see that function's ordering: re-quote/drift/budget checks
     # all happen before the PaymentMandate is minted).
     State.APPROVED: {State.EXECUTING, State.ABORTED, State.REFUSED},
-    State.EXECUTING: {State.DONE, State.REFUSED},
+    State.EXECUTING: {State.DONE, State.REFUSED, State.AWAITING_PAYMENT,
+                      State.NEEDS_RECONCILIATION},
+    # He can pay in the app and the order completes, or give up on it. It can
+    # never jump to DONE on its own — only a reconciliation that FINDS the
+    # order at the merchant may do that.
+    State.AWAITING_PAYMENT: {State.DONE, State.ABORTED, State.REFUSED},
+    State.NEEDS_RECONCILIATION: {State.DONE, State.REFUSED},
     State.DONE: set(),
     State.ABORTED: set(),
     State.REFUSED: set(),
@@ -87,6 +103,9 @@ class Order:
     amendments: list[dict[str, Any]] = field(default_factory=list)
     revision_rounds: int = 0
     payment: dict[str, Any] | None = None
+    # The real basket at the merchant, once one has been built. A new field with
+    # a default, so order files written before this existed still load.
+    merchant_cart: dict[str, Any] | None = None
     merchant_order_id: str | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -250,6 +269,38 @@ def approve_cart(order_id: str, *, approved_by: str, approval_factor: str) -> Or
     return order
 
 
+def _amount_the_human_approved(order) -> float:
+    """The number he was actually shown and said yes to.
+
+    THE BUG THIS FIXES MADE PAYMENT IMPOSSIBLE ON SWIGGY. This used to be
+    `order.cart["landed_total_inr"]`, which is the COMPARISON-stage total:
+    item prices only, because fees are unreadable until a cart exists. The
+    drift check then compared it against a fresh quote that DOES include fees,
+    so the two differed by exactly the fee and the check fired every time:
+
+        order_2c4eef60badd — approved ₹122.00, re-quoted ₹125.00,
+        refused as "price drifted" when the only difference was ₹3.01 of
+        handling that he had already been shown and had explicitly approved.
+
+    Any basket carrying any fee was unpayable, which is to say payment never
+    worked at all on this merchant.
+
+    Once a merchant cart has been BUILT, its total is the figure the chat put
+    in front of him ("How do you want to pay the ₹125.00?") and the figure
+    printed on the button he pressed ("Order now, pay ₹125 cash"). That is what
+    he approved, so that is what the drift check must defend.
+
+    The check itself is unchanged in purpose and still matters: it catches the
+    price moving between the basket being shown and the money leaving. It just
+    has to compare like with like.
+    """
+    built = getattr(order, "merchant_cart", None) or {}
+    shown = float(built.get("total_inr") or 0)
+    if shown > 0:
+        return shown
+    return float(order.cart["landed_total_inr"])
+
+
 def approve_payment_and_execute(
     order_id: str, *, approved_by: str, approval_factor: str, rail, adapter,
 ) -> Order:
@@ -270,7 +321,7 @@ def approve_payment_and_execute(
     if not cart_mandate.hash_matches(order.cart):
         raise ApprovalRefused("cart_hash mismatch at execute time — cart was mutated after approval")
 
-    approved_total = order.cart["landed_total_inr"]
+    approved_total = _amount_the_human_approved(order)
 
     # Re-build the real merchant cart now, at the last possible moment before
     # money moves, and re-quote it. This is where a surge-priced or
@@ -297,8 +348,10 @@ def approve_payment_and_execute(
         _transition(order, State.REFUSED)
         _save(order)
         raise ApprovalRefused(
-            f"price drifted since cart approval: was ₹{approved_total:.2f}, now "
-            f"₹{fresh_quote.landed_total_inr:.2f} — refusing to charge a total you did not see"
+            f"the price moved between showing you the basket and paying for it: "
+            f"you approved ₹{approved_total:.2f}, the merchant now wants "
+            f"₹{fresh_quote.landed_total_inr:.2f}. Nothing has been charged. "
+            f"Send the list again to see the new price."
         )
 
     amount = fresh_quote.landed_total_inr
@@ -315,26 +368,88 @@ def approve_payment_and_execute(
     )
     payment_mandate.persist(pm)
 
-    if ledger_store.already_spent(pm["payment_id"]):
-        raise ApprovalRefused("replay detected — this PaymentMandate has already been spent")
+    # THE SIGNATURE IS VERIFIED, not just the hash. signing.verify() had no
+    # production call site at all — the CartMandate was signed on approval and
+    # nothing ever checked the signature before spending against it, which made
+    # the whole signing apparatus decorative. A forged or edited mandate with a
+    # correct hash would have passed.
+    if not cart_mandate.signature_valid(order.cart):
+        audit_log.append("order.mandate_signature_invalid", {"order_id": order_id})
+        _transition(order, State.REFUSED)
+        _save(order)
+        raise ApprovalRefused(
+            "the cart mandate's signature does not verify — refusing to pay "
+            "against a mandate this system cannot prove it issued")
+
+    # THE REPLAY GUARD, WHICH NOW ACTUALLY FIRES. It used to ask whether
+    # pm["payment_id"] had been spent — a value minted four lines above, so the
+    # answer was always no and the guard was decorative. The key below is
+    # derived from the order and the exact approved basket, so the same basket
+    # cannot be paid twice by a double tap, a retry, or a second process.
+    #
+    # It is claimed BEFORE the rail is called. That ordering is the crash-safety
+    # story: if the process dies during payment, this row survives saying what
+    # was in flight, and unsettled() finds it on restart.
+    key = ledger_store.intent_key(order_id, cart_mandate.hash_of(order.cart))
+    claimed, existing = ledger_store.claim_intent(
+        key=key, order_id=order_id, cart_hash=cart_mandate.hash_of(order.cart),
+        amount_inr=amount, rail=rail.rail_id, payment_id=pm["payment_id"],
+    )
+    if not claimed:
+        state_was = (existing or {}).get("state", "unknown")
+        audit_log.append("order.replay_refused", {
+            "order_id": order_id, "intent_key": key, "existing_state": state_was})
+        raise ApprovalRefused(
+            f"this basket has already been through payment once "
+            f"({state_was}) — refusing to send it again")
 
     order.payment = pm
     audit_log.append("order.payment_approved", {
         "order_id": order_id, "payment_id": pm["payment_id"], "amount_inr": amount,
         "approved_by": approved_by, "approval_factor": approval_factor,
+        "rail": rail.rail_id, "intent_key": key,
     })
     _transition(order, State.EXECUTING)
     _save(order)
 
-    result = rail.pay(payment_mandate=pm, cart_ref=cart_ref, adapter=adapter)
+    try:
+        result = rail.pay(payment_mandate=pm, cart_ref=cart_ref, adapter=adapter)
+    except Exception as exc:  # noqa: BLE001
+        # WE DO NOT KNOW WHETHER MONEY MOVED. The intent row is deliberately
+        # left in state 'intent' so unsettled() keeps surfacing it, and the
+        # order goes to NEEDS_RECONCILIATION rather than REFUSED — calling this
+        # a failure is what would let somebody re-place an order that already
+        # went through.
+        audit_log.append("order.execute_uncertain", {
+            "order_id": order_id, "intent_key": key, "detail": str(exc)[:300]})
+        _transition(order, State.NEEDS_RECONCILIATION)
+        _save(order)
+        raise ApprovalRefused(
+            f"the payment did not come back cleanly, so whether it went through "
+            f"is unknown: {str(exc)[:200]}. Check your Swiggy orders before "
+            f"trying again — do NOT re-approve this basket.")
 
     if not result.ok:
+        ledger_store.fail_intent(key, detail=result.detail)
         audit_log.append("order.execute_failed", {"order_id": order_id, "detail": result.detail})
         _transition(order, State.REFUSED)
         _save(order)
         raise ApprovalRefused(result.detail)
 
+    if not result.settled:
+        # The rail did its job and charged nothing — a basket handed over for a
+        # human to pay. No record_spend, because nothing was spent; the caps
+        # must not be consumed by money that never left.
+        ledger_store.hand_off_intent(key, detail=result.detail)
+        audit_log.append("order.handed_off", {
+            "order_id": order_id, "amount_inr": amount, "detail": result.detail})
+        _transition(order, State.AWAITING_PAYMENT)
+        _save(order)
+        return order
+
     ledger_store.record_spend(payment_id=pm["payment_id"], cart_id=cart_ref, amount_inr=amount, rail=rail.rail_id)
+    ledger_store.settle_intent(key, merchant_order_id=result.merchant_order_id,
+                               detail=result.detail)
     order.merchant_order_id = result.merchant_order_id
     audit_log.append("order.executed", {
         "order_id": order_id, "merchant_order_id": result.merchant_order_id, "amount_inr": amount,
